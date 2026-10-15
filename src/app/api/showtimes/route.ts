@@ -2,8 +2,8 @@ import { fetchSceneFMovies } from "@/lib/scenef";
 
 export async function GET(request: Request) {
   try {
-    const excludeAmc = new URL(request.url).searchParams.get("excludeAmc") === "1";
-    const payload = await fetchSceneFMovies({ excludeAmc });
+    const showAllHidden = new URL(request.url).searchParams.get("showAllHidden") === "1";
+    const payload = await fetchSceneFMovies({ excludeAmc: !showAllHidden });
     return Response.json(payload, {
       headers: {
         "Cache-Control": "no-store",

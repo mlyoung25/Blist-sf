@@ -5,20 +5,20 @@ export type VenueConfig = {
   id: string;
   name: string;
   isAmc: boolean;
+  websiteUrl?: string;
 };
 
 export const VENUES: readonly VenueConfig[] = [
-  { id: "4star", name: "4 Star Theatre", isAmc: false },
-  { id: "alamo-new-mission", name: "Alamo Drafthouse", isAmc: false },
-  { id: "apple-van-ness", name: "Apple Cinemas Van Ness IMAX", isAmc: false },
-  { id: "balboa", name: "Balboa Theatre", isAmc: false },
-  { id: "castro", name: "Castro Theatre", isAmc: false },
-  { id: "opera-plaza", name: "Landmark Opera Plaza Cinema", isAmc: false },
-  { id: "marina", name: "Marina Theatre", isAmc: false },
-  { id: "presidio", name: "Presidio Theatre", isAmc: false },
-  { id: "regal-stonestown", name: "Regal Stonestown Galleria 12", isAmc: false },
-  { id: "roxie", name: "Roxie Theatre", isAmc: false },
-  { id: "vogue", name: "Vogue Theatre", isAmc: false },
+  { id: "4star", name: "4 Star Theatre", isAmc: false, websiteUrl: "https://www.4-star-movies.com" },
+  { id: "alamo-new-mission", name: "Alamo Drafthouse", isAmc: false, websiteUrl: "https://drafthouse.com/sf#now-playing" },
+  { id: "apple-van-ness", name: "Apple Cinemas Van Ness IMAX", isAmc: false, websiteUrl: "https://www.applecinemas.com/home/68543b29ef719f9969b8ad87" },
+  { id: "balboa", name: "Balboa Theatre", isAmc: false, websiteUrl: "https://www.balboamovies.com" },
+  { id: "opera-plaza", name: "Landmark Opera Plaza Cinema", isAmc: false, websiteUrl: "https://www.landmarktheatres.com" },
+  { id: "marina", name: "Marina Theatre", isAmc: false, websiteUrl: "https://www.lntsf.com/marina-theatre" },
+  { id: "presidio", name: "Presidio Theatre", isAmc: false, websiteUrl: "https://www.lntsf.com/presidio-theatre" },
+  { id: "regal-stonestown", name: "Regal Stonestown Galleria 12", isAmc: false, websiteUrl: "https://www.regmovies.com/theatres/regal-stonestown-galleria-1464" },
+  { id: "roxie", name: "Roxie Theatre", isAmc: false, websiteUrl: "https://roxie.com/calendar/" },
+  { id: "vogue", name: "Vogue Theatre", isAmc: false, websiteUrl: "https://www.voguemovies.com" },
 ] as const;
 
 export const AMC_VENUES: readonly VenueConfig[] = [
@@ -26,7 +26,7 @@ export const AMC_VENUES: readonly VenueConfig[] = [
   { id: "amc-metreon", name: "AMC Metreon 16", isAmc: true },
 ] as const;
 
-type SceneFFilm = {
+export type SceneFFilm = {
   key: string;
   title: string;
   year?: number;
@@ -84,6 +84,7 @@ export type TheaterRun = {
   venueId: string;
   venueName: string;
   sourceUrl: string;
+  websiteUrl: string;
   startDate: string;
   endDate: string;
   durationDays: number;
@@ -130,6 +131,10 @@ export type MoviesPayload = {
     excludedMovieCount: number;
     excludedTitles: string[];
     sourceUrls: string[];
+  };
+  nonFilmFilter: {
+    excludedMovieCount: number;
+    excludedTitles: string[];
   };
 };
 
@@ -184,6 +189,40 @@ export function titlesMatch(first: string, second: string) {
   return [...firstKeys].some((key) => secondKeys.has(key));
 }
 
+export function isLikelyFilm(film: SceneFFilm, tags: string[] = []) {
+  const title = normalizeMovieTitle(film.title);
+  const overview = normalizeMovieTitle(film.overview ?? "");
+  const tagText = normalizeMovieTitle(tags.join(" "));
+  const hasFilmMetadata = Boolean(
+    film.year
+    || film.runtimeMin
+    || film.posterUrl
+    || (film.directors && film.directors.length > 0),
+  );
+
+  if (/\bsecret\s+(?:movie|screening)\b/i.test(film.title)) {
+    return false;
+  }
+
+  const categoryLabelRaw = /^(?:live music|live|music|comedy|stand[- ]?up|concert|performance|talk|lecture|panel)\s*(?::|[|—-]|\s+at\b)/i;
+  const categoryLabel = /^(?:live music|live|music|comedy|stand up|standup|concert|performance|talk|lecture|panel)\s+(?:at|with)\b/;
+  const explicitLiveEvent = /\blive music\b|\bwith live (?:music|score)\b|\blive original score\b/;
+  if (categoryLabelRaw.test(film.title) || categoryLabel.test(title) || explicitLiveEvent.test(title)) return false;
+
+  const genericEventTitle = /^(?:live|music|comedy|stand up|standup|concert|performance|talk|lecture|panel)$/;
+  const eventDescription = /\b(?:live music|performing live|live performance|stand up comedy|standup comedy|in concert|on stage)\b/;
+  const eventTag = /\b(?:live music|live event|comedy show|concert|stage event)\b/;
+  if (!hasFilmMetadata && (
+    genericEventTitle.test(title)
+    || eventDescription.test(overview)
+    || eventTag.test(tagText)
+  )) {
+    return false;
+  }
+
+  return true;
+}
+
 function movieIdentity(film: SceneFFilm) {
   return `${normalizeMovieTitle(film.title)}:${film.year ?? "unknown"}`;
 }
@@ -207,6 +246,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
 
   const statuses = sourceStatus(feeds);
   const horizonByVenue = new Map(statuses.map((status) => [status.venueId, status.latestListingDate]));
+  const excludedNonFilmTitles = new Set<string>();
   const movieMap = new Map<string, {
     movie: Omit<Movie, "runs">;
     runs: Map<string, {
@@ -222,6 +262,10 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
       if (screening.nightOf < start) continue;
       const film = films.get(screening.filmKey);
       if (!film) continue;
+      if (!isLikelyFilm(film, screening.tags)) {
+        excludedNonFilmTitles.add(film.title);
+        continue;
+      }
 
       const identity = movieIdentity(film);
       let movieEntry = movieMap.get(identity);
@@ -255,6 +299,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             venueId: venue.id,
             venueName: venue.name,
             sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
+            websiteUrl: venue.websiteUrl ?? `${SCENEF_BASE_URL}/theater/${venue.id}`,
             sourceTier: screening.source_tier ?? null,
             confidence: screening.confidence ?? null,
             verifiedAt: screening.verified_at ?? null,
@@ -327,6 +372,10 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
       excludedMovieCount: 0,
       excludedTitles: [],
       sourceUrls: [],
+    },
+    nonFilmFilter: {
+      excludedMovieCount: excludedNonFilmTitles.size,
+      excludedTitles: [...excludedNonFilmTitles].sort(),
     },
   };
 }

@@ -8,9 +8,21 @@ One card represents a movie across every configured theater. Open a card to see 
 theater's full currently published run, grouped by date. An ellipsis means the movie
 reaches that theater's last published SceneF date, so later availability is unknown.
 
-The optional AMC filter fetches SceneF's `amc-kabuki` and `amc-metreon` feeds and
-removes a whole movie card when a normalized title match appears at either AMC. It
-fails closed if either AMC source cannot be checked.
+Movies appearing in SceneF's `amc-kabuki` or `amc-metreon` feeds are hidden by
+default using normalized title matching. **Show all hidden** fetches the unfiltered
+roster and also restores user-hidden cards. It fails closed if either AMC source
+cannot be checked. Pins and manual hides persist in local storage; pins only reorder
+the main movie grid and do not create a separate saved page.
+
+The UI supports simultaneous theater selections and one-day/multi-day filtering.
+One-day cards and runs use a high-contrast cyan treatment. Month dividers use each
+movie's earliest run start, so a run that crosses into a later month stays before that
+month's divider.
+
+The importer rejects explicit non-film category labels and descriptions (live music,
+music, comedy, concert-like events) plus secret-movie listings. Film metadata and
+context prevent legitimate titles such as *They Live*, *Music*, and *National Theatre
+Live: Frankenstein* from being removed.
 
 ## Data refresh schedule
 
@@ -22,7 +34,7 @@ rejects the extra call and handles daylight-saving transitions without manually
 changing the schedule. Configure `CRON_SECRET` in the deployment so Vercel sends
 `Authorization: Bearer <CRON_SECRET>`.
 
-The refresh invalidates the shared SceneF cache and prewarms all 11 theater sources
+The refresh invalidates the shared SceneF cache and prewarms all 10 theater sources
 plus both AMC comparison sources. SceneF's per-screening freshness, confidence,
 verification timestamp, and stable `/go/` ticket URL remain attached to normalized
 runs.
