@@ -16,8 +16,6 @@ const PINNED_KEY = "blist-pinned-movies";
 const LEGACY_SAVED_KEY = "blist-saved-movies";
 const HIDDEN_KEY = "blist-hidden-movies";
 
-type RunFilter = "all" | "one-day" | "multi-day";
-
 function formatDate(date: string, includeYear = false) {
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
@@ -88,7 +86,7 @@ export default function ShowtimesApp() {
   const [query, setQuery] = useState("");
   const [showAllHidden, setShowAllHidden] = useState(false);
   const [selectedVenues, setSelectedVenues] = useState<string[]>([]);
-  const [runFilter, setRunFilter] = useState<RunFilter>("all");
+  const [oneDayOnly, setOneDayOnly] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [onFilmOnly, setOnFilmOnly] = useState(false);
   const [pinned, setPinned] = useState<string[]>([]);
@@ -133,9 +131,7 @@ export default function ShowtimesApp() {
         const matchesVenues = selectedVenues.length === 0
           || movie.runs.some((run) => selectedVenues.includes(run.venueId));
         const oneDay = isOneDayMovie(movie);
-        const matchesRun = runFilter === "all"
-          || (runFilter === "one-day" && oneDay)
-          || (runFilter === "multi-day" && !oneDay);
+        const matchesRun = !oneDayOnly || oneDay;
         const matchesDate = selectedDate === null
           || movie.runs.some((run) => run.dates.some((date) => date.date === selectedDate));
         const matchesOnFilm = !onFilmOnly || movie.onFilm.matched;
@@ -147,7 +143,7 @@ export default function ShowtimesApp() {
         return matchesHidden && matchesVenues && matchesRun && matchesDate && matchesOnFilm && haystack.includes(needle);
       });
     return sortMovies(filtered, selectedDate, pinned);
-  }, [hidden, onFilmOnly, payload, pinned, query, runFilter, selectedDate, selectedVenues, showAllHidden]);
+  }, [hidden, onFilmOnly, oneDayOnly, payload, pinned, query, selectedDate, selectedVenues, showAllHidden]);
 
   const availableDates = useMemo(() => {
     if (!payload) return [];
@@ -189,13 +185,13 @@ export default function ShowtimesApp() {
         data-run-type={oneDay ? "one-day" : "multi-day"}
         data-on-film={movie.onFilm.matched ? "true" : "false"}
         className={`min-w-0 rounded-xl border-2 bg-zinc-950 p-[3px] ${
-          oneDay ? "border-blue-500/90" : "border-white/10"
+          oneDay ? "border-blue-500" : "border-white/10"
         }`}
       >
         <div
           data-card-frame
           className={`flex h-full min-w-0 flex-col overflow-hidden rounded-lg border-2 bg-zinc-900 ${
-            movie.onFilm.matched ? "border-yellow-400/90" : "border-transparent"
+            movie.onFilm.matched ? "border-yellow-400" : "border-transparent"
           }`}
         >
         {(oneDay || movie.onFilm.matched) && (
@@ -288,8 +284,8 @@ export default function ShowtimesApp() {
 
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-4 text-zinc-100 md:px-8 md:py-6">
-      <section className="w-full">
-        <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
+      <section className="w-full lg:mx-auto lg:w-[70vw] ultrawide:w-[88vw]">
+        <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 controls:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
           <label className="relative">
             <span className="sr-only">Search movies</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
@@ -327,28 +323,24 @@ export default function ShowtimesApp() {
             </fieldset>
           </details>
 
-          <label>
-            <span className="sr-only">Filter by run length</span>
-            <select
-              value={runFilter}
-              onChange={(event) => setRunFilter(event.target.value as RunFilter)}
-              className="h-10 w-full rounded-md border border-white/10 bg-zinc-900 px-3 text-sm outline-none focus:border-white/30"
-              aria-label="Filter by run length"
-            >
-              <option value="all">All run lengths</option>
-              <option value="one-day">One-day only</option>
-              <option value="multi-day">Multi-day only</option>
-            </select>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm focus-within:border-blue-500">
+            <input
+              type="checkbox"
+              checked={oneDayOnly}
+              onChange={(event) => setOneDayOnly(event.target.checked)}
+              className="size-4 accent-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            />
+            One day
           </label>
 
-          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm focus-within:border-yellow-400">
             <input
               type="checkbox"
               checked={onFilmOnly}
               onChange={(event) => setOnFilmOnly(event.target.checked)}
-              className="accent-yellow-400"
+              className="size-4 accent-yellow-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-400"
             />
-            On Film only
+            On Film
           </label>
 
           <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
@@ -430,7 +422,7 @@ export default function ShowtimesApp() {
 
         <div
           data-movie-grid
-          className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-[repeat(auto-fill,minmax(210px,1fr))]"
+          className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 ultrawide:grid-cols-[repeat(auto-fill,minmax(190px,1fr))]"
         >
           {pinnedMovies.length > 0 && (
             <div className="col-span-full flex items-center gap-3 pt-1" data-divider="pinned">

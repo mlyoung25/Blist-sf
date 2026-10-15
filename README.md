@@ -23,6 +23,12 @@ or poster dimensions. Screen-reader-only status text and the labeled filters pre
 the same meaning nonvisually. Month dividers use each movie's earliest run start, so a
 run that crosses into a later month stays before that month's divider.
 
+At normal desktop widths the content occupies 70% of the viewport with four cards per
+row and 15% margins on each side. That layout remains through a 1800px effective
+viewport (approximately 80% zoom from a 1440px baseline). Above 1800px the content
+expands to 88% and an auto-fill grid adds smaller cards and columns. Mobile remains a
+single full-width card below 460px.
+
 The importer rejects explicit non-film category labels and descriptions (live music,
 music, comedy, concert-like events) plus secret-movie listings. Film metadata and
 context prevent legitimate titles such as *They Live* and *Music* from being removed,
@@ -64,7 +70,9 @@ server-authored [`/on-film`](https://scenef.com/on-film) page. The app does not 
 membership from age, genre, repertory tags, or theater. The page is cached alongside
 the listings for 12 hours; fetch failures are isolated and reported in the source
 details instead of marking unverified movies. Matching cards receive an accessible
-yellow treatment and can be filtered with **On Film only**.
+yellow treatment and can be filtered with the gold **On Film** checkbox. The blue
+**One day** checkbox matches the one-day card's outer border and replaces the
+general run-length selector.
 
 The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
 browser extensions can inject attributes there before hydration. No app subtree uses

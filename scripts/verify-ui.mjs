@@ -113,9 +113,25 @@ function assertCompleteDualRings(geometry) {
   assert.equal(geometry.offsets.every((offset) => Math.abs(offset - 5) < 0.1), true);
 }
 
+async function layoutMetrics(page) {
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const sectionBox = await page.locator("section").first().boundingBox();
+  const cardBox = await page.locator("article").first().boundingBox();
+  const columns = await page.locator("[data-movie-grid]").evaluate((grid) => (
+    getComputedStyle(grid).gridTemplateColumns.split(" ").length
+  ));
+  return {
+    viewportWidth,
+    columns,
+    cardWidth: cardBox.width,
+    leftMarginRatio: sectionBox.x / viewportWidth,
+    rightMarginRatio: (viewportWidth - sectionBox.x - sectionBox.width) / viewportWidth,
+  };
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.addInitScript(() => {
     const inject = () => {
       if (!document.documentElement) return false;
@@ -192,9 +208,9 @@ try {
   const neutralClass = await cardFor(neutralMovie).getAttribute("class");
   const neutralFrameClass = await frameFor(neutralMovie).getAttribute("class");
   assert.match(oneDayOnlyClass, /border-2/);
-  assert.match(oneDayOnlyClass, /border-blue-500\/90/);
-  assert.match(dualBorderClass, /border-blue-500\/90/);
-  assert.match(dualFrameClass, /border-yellow-400\/90/);
+  assert.match(oneDayOnlyClass, /border-blue-500/);
+  assert.match(dualBorderClass, /border-blue-500/);
+  assert.match(dualFrameClass, /border-yellow-400/);
   assert.doesNotMatch(neutralClass, /border-blue-500/);
   assert.match(neutralFrameClass, /border-transparent/);
   assertCompleteDualRings(await ringGeometry(cardFor(dualBorderMovie)));
@@ -215,11 +231,32 @@ try {
   );
   assert.equal(posterRatios.every((ratio) => Math.abs(ratio - (2 / 3)) < 0.01), true);
 
+  const oneDayCheckbox = page.getByLabel("One day", { exact: true });
+  const onFilmCheckbox = page.getByLabel("On Film", { exact: true });
+  const borderAndControlColors = await Promise.all([
+    cardFor(oneDayOnlyMovie).evaluate((card) => getComputedStyle(card).borderTopColor),
+    oneDayCheckbox.evaluate((control) => getComputedStyle(control).accentColor),
+    frameFor(dualBorderMovie).evaluate((frame) => getComputedStyle(frame).borderTopColor),
+    onFilmCheckbox.evaluate((control) => getComputedStyle(control).accentColor),
+  ]);
+  assert.equal(borderAndControlColors[0], borderAndControlColors[1]);
+  assert.equal(borderAndControlColors[2], borderAndControlColors[3]);
+  await oneDayCheckbox.focus();
+  assert.equal(
+    await oneDayCheckbox.locator("..").evaluate((label) => getComputedStyle(label).borderTopColor),
+    borderAndControlColors[0],
+  );
+  await onFilmCheckbox.focus();
+  assert.equal(
+    await onFilmCheckbox.locator("..").evaluate((label) => getComputedStyle(label).borderTopColor),
+    borderAndControlColors[2],
+  );
+
   await page.getByLabel("Show all hidden").check();
   await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).waitFor();
   const onFilmOnlyClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).getAttribute("class");
   const onFilmOnlyFrameClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}] [data-card-frame]`).getAttribute("class");
-  assert.match(onFilmOnlyFrameClass, /border-yellow-400\/90/);
+  assert.match(onFilmOnlyFrameClass, /border-yellow-400/);
   assert.doesNotMatch(onFilmOnlyClass, /border-blue-500/);
   await page.getByLabel("Show all hidden").uncheck();
   await page.locator("article").first().waitFor();
@@ -250,16 +287,17 @@ try {
   assert.equal(await selectedDateButton.getAttribute("aria-pressed"), "true");
   await dateNav.getByRole("button", { name: "All dates" }).click();
 
-  await page.getByLabel("On Film only").check();
+  await onFilmCheckbox.check();
+  assert.equal(await onFilmCheckbox.isChecked(), true);
   assert.equal(await page.locator("article").count(), onFilmMovies.length);
   assert.equal(await page.locator("article[data-on-film='true']").count(), onFilmMovies.length);
   assert.equal(
     await page.locator("article[data-on-film='true'] [data-card-frame]").evaluateAll((frames) => (
-      frames.every((frame) => frame.className.includes("border-yellow-400/90"))
+      frames.every((frame) => frame.className.includes("border-yellow-400"))
     )),
     true,
   );
-  await page.getByLabel("On Film only").uncheck();
+  await onFilmCheckbox.uncheck();
 
   const theaterDetails = page.locator("details").first();
   await theaterDetails.locator("summary").click();
@@ -275,17 +313,18 @@ try {
   await theaterDetails.getByRole("button", { name: "Clear" }).click();
   await theaterDetails.locator("summary").click();
 
-  await page.getByLabel("Filter by run length").selectOption("one-day");
+  await oneDayCheckbox.check();
+  assert.equal(await oneDayCheckbox.isChecked(), true);
   assert.equal(await page.locator("article").count(), oneDayCount);
   assert.equal(await page.locator("article[data-run-type='multi-day']").count(), 0);
   assert.equal(
-    await page.locator("article").evaluateAll((cards) => cards.every((card) => card.className.includes("border-blue-500/90"))),
+    await page.locator("article").evaluateAll((cards) => cards.every((card) => card.className.includes("border-blue-500"))),
     true,
   );
   assert.equal(await page.locator("article").getByText("One-day event", { exact: true }).count(), 0);
-  await page.getByLabel("Filter by run length").selectOption("multi-day");
-  assert.equal(await page.locator("article").count(), multiDayCount);
-  await page.getByLabel("Filter by run length").selectOption("all");
+  await oneDayCheckbox.uncheck();
+  assert.equal(await oneDayCheckbox.isChecked(), false);
+  assert.equal(await page.locator("article").count(), defaultPayload.movies.length);
 
   const multiCard = page.locator(`article[data-movie-id=${JSON.stringify(multi.id)}]`);
   assert.equal(
@@ -362,10 +401,27 @@ try {
   }).length);
   assert.equal(unlabeledControls, 0);
 
-  const desktopGridColumns = await page.locator("[data-movie-grid]").evaluate((grid) => (
-    getComputedStyle(grid).gridTemplateColumns.split(" ").length
+  const desktopLayout = await layoutMetrics(page);
+  assert.equal(desktopLayout.columns, 4);
+  assert.ok(Math.abs(desktopLayout.leftMarginRatio - 0.15) < 0.005);
+  assert.ok(Math.abs(desktopLayout.rightMarginRatio - 0.15) < 0.005);
+
+  const eightyPercent = await context.newPage();
+  eightyPercent.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  eightyPercent.on("pageerror", (error) => pageErrors.push(error.message));
+  await eightyPercent.setViewportSize({ width: 1800, height: 1100 });
+  await eightyPercent.goto(baseUrl, { waitUntil: "networkidle" });
+  const eightyLayout = await layoutMetrics(eightyPercent);
+  assert.equal(eightyLayout.columns, 4);
+  assert.ok(Math.abs(eightyLayout.leftMarginRatio - 0.15) < 0.005);
+  assert.ok(Math.abs(eightyLayout.rightMarginRatio - 0.15) < 0.005);
+  assert.ok(Math.abs((eightyLayout.cardWidth * 0.8) - desktopLayout.cardWidth) < 5);
+  assertCompleteDualRings(await ringGeometry(
+    eightyPercent.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
   ));
-  const desktopCardBox = await page.locator("article").first().boundingBox();
+
   const wide = await context.newPage();
   wide.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -373,13 +429,11 @@ try {
   wide.on("pageerror", (error) => pageErrors.push(error.message));
   await wide.setViewportSize({ width: 2400, height: 1200 });
   await wide.goto(baseUrl, { waitUntil: "networkidle" });
-  const wideGridColumns = await wide.locator("[data-movie-grid]").evaluate((grid) => (
-    getComputedStyle(grid).gridTemplateColumns.split(" ").length
-  ));
-  const wideCardBox = await wide.locator("article").first().boundingBox();
-  assert.ok(wideGridColumns > desktopGridColumns);
-  assert.ok(wideCardBox.width < desktopCardBox.width);
-  assert.ok((await wide.locator("section").first().boundingBox()).width > 2200);
+  const wideLayout = await layoutMetrics(wide);
+  assert.ok(wideLayout.columns > eightyLayout.columns);
+  assert.ok(wideLayout.cardWidth < desktopLayout.cardWidth);
+  assert.ok(Math.abs(wideLayout.leftMarginRatio - 0.06) < 0.005);
+  assert.ok(Math.abs(wideLayout.rightMarginRatio - 0.06) < 0.005);
   assertCompleteDualRings(await ringGeometry(
     wide.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
   ));
@@ -416,8 +470,13 @@ try {
     pinPersistedAndSortedFirst: true,
     oneDayCount,
     multiDayCount,
+    compactStateFiltersVerified: true,
+    stateFilterColors: {
+      oneDay: borderAndControlColors[0],
+      onFilm: borderAndControlColors[2],
+    },
     borderStatesAndDimensionsVerified: true,
-    completeDualRingsVerifiedAtWidths: [390, 1280, 2400],
+    completeDualRingsVerifiedAtWidths: [390, 1440, 1800, 2400],
     outerAndInnerBorderWidths: "2px each side",
     interRingGap: "3px each side",
     theaterMultiselectUnionCount: unionCount,
@@ -427,10 +486,22 @@ try {
     onFilmMovieCount: onFilmMovies.length,
     languageCoverage: defaultPayload.movies.filter((movie) => movie.languages.length > 0).length,
     directorOnlySearchResults: 0,
-    desktopGridColumns,
-    wideGridColumns,
-    desktopCardWidth: Math.round(desktopCardBox.width),
-    wideCardWidth: Math.round(wideCardBox.width),
+    desktop1440: {
+      columns: desktopLayout.columns,
+      marginPercentPerSide: Number((desktopLayout.leftMarginRatio * 100).toFixed(1)),
+      cardWidth: Math.round(desktopLayout.cardWidth),
+    },
+    zoom80Equivalent1800: {
+      columns: eightyLayout.columns,
+      marginPercentPerSide: Number((eightyLayout.leftMarginRatio * 100).toFixed(1)),
+      cardWidth: Math.round(eightyLayout.cardWidth),
+      scaledCardWidth: Math.round(eightyLayout.cardWidth * 0.8),
+    },
+    zoom60Equivalent2400: {
+      columns: wideLayout.columns,
+      marginPercentPerSide: Number((wideLayout.leftMarginRatio * 100).toFixed(1)),
+      cardWidth: Math.round(wideLayout.cardWidth),
+    },
     mobileCardWidth: Math.round(mobileCardBox.width),
     imdbRatingCoverage: defaultPayload.movies.filter((movie) => movie.ratings.imdb !== null).length,
     letterboxdAndTmdbRatingsHidden: true,
