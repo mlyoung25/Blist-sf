@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ArrowUpRight,
   CalendarDays,
@@ -129,7 +130,7 @@ const films = [
 
 const venues = ["All venues", "Roxie Theater", "BAMPFA", "4 Star Theater", "Alamo Drafthouse", "Balboa Theater", "The Castro Theatre"];
 
-export default function ShowtimesApp() {
+export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolean }) {
   const [selectedDay, setSelectedDay] = useState("Tonight");
   const [venue, setVenue] = useState("All venues");
   const [query, setQuery] = useState("");
@@ -152,10 +153,11 @@ export default function ShowtimesApp() {
 
   const visibleFilms = useMemo(() => films.filter((film) => {
     const searchTarget = `${film.title} ${film.director} ${film.venue}`.toLowerCase();
-    return film.day === selectedDay
+    return (!savedOnly || saved.includes(film.id))
+      && (savedOnly || film.day === selectedDay)
       && (venue === "All venues" || film.venue === venue)
       && searchTarget.includes(query.toLowerCase());
-  }), [selectedDay, venue, query]);
+  }), [selectedDay, venue, query, saved, savedOnly]);
 
   return (
     <main className="min-h-screen bg-[#f4f0e8] text-[#1b1c19]">
@@ -168,11 +170,11 @@ export default function ShowtimesApp() {
             <span className="font-display text-[1.65rem] leading-none tracking-[-0.04em]">Reel Local</span>
           </a>
           <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
-            <a className="border-b border-black pb-1" href="#showtimes">Showtimes</a>
-            <a className="text-black/55 transition hover:text-black" href="#venues">Venues</a>
-            <span className="flex items-center gap-2 text-black/55">
+            <Link className={savedOnly ? "text-black/55 transition hover:text-black" : "border-b border-black pb-1"} href="/#showtimes">Showtimes</Link>
+            <Link className="text-black/55 transition hover:text-black" href="/#venues">Venues</Link>
+            <Link className={`flex items-center gap-2 ${savedOnly ? "border-b border-black pb-1" : "text-black/55 transition hover:text-black"}`} href="/saved">
               Saved <span className="rounded-full bg-black px-2 py-0.5 text-[10px] text-white">{saved.length}</span>
-            </span>
+            </Link>
           </nav>
           <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu"><Menu className="size-5" /></Button>
         </div>
@@ -198,7 +200,7 @@ export default function ShowtimesApp() {
 
       <section id="showtimes" className="mx-auto max-w-[1440px] px-5 py-8 md:px-10 md:py-12">
         <div className="flex flex-col gap-6 border-b border-black/10 pb-8">
-          <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+          {!savedOnly && <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
             {days.map((day) => (
               <button key={day.key} onClick={() => setSelectedDay(day.key)}
                 className={`min-w-[104px] rounded-full border px-5 py-3 text-left transition ${selectedDay === day.key ? "border-black bg-black text-white" : "border-black/15 bg-white/35 hover:border-black/50"}`}>
@@ -206,7 +208,7 @@ export default function ShowtimesApp() {
                 <span className={`block text-[11px] ${selectedDay === day.key ? "text-white/55" : "text-black/45"}`}>{day.date}</span>
               </button>
             ))}
-          </div>
+          </div>}
           <div className="flex flex-col justify-between gap-3 sm:flex-row">
             <div className="relative w-full sm:max-w-sm">
               <Search className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-black/45" />
@@ -238,8 +240,8 @@ export default function ShowtimesApp() {
 
         <div className="mb-7 mt-10 flex items-end justify-between">
           <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#e03e25]">{selectedDay} in the Bay</p>
-            <h2 className="font-display text-4xl tracking-tight md:text-5xl">Now showing</h2>
+            <p className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-[#e03e25]">{savedOnly ? "Your watchlist" : `${selectedDay} in the Bay`}</p>
+            <h2 className="font-display text-4xl tracking-tight md:text-5xl">{savedOnly ? "Saved screenings" : "Now showing"}</h2>
           </div>
           <span className="hidden text-sm text-black/45 sm:block">{visibleFilms.length} {visibleFilms.length === 1 ? "film" : "films"}</span>
         </div>
@@ -283,10 +285,16 @@ export default function ShowtimesApp() {
           <div className="grid min-h-72 place-items-center rounded-[1.5rem] border border-dashed border-black/20 bg-white/25 text-center">
             <div>
               <CalendarDays className="mx-auto mb-4 size-8 text-black/30" />
-              <h3 className="font-display text-2xl">Nothing on this reel</h3>
-              <p className="mt-2 text-sm text-black/50">Try another date, venue, or search.</p>
-              <Button variant="outline" onClick={() => { setQuery(""); setVenue("All venues"); }}
-                className="mt-5 rounded-full border-black/20 bg-transparent">Clear filters</Button>
+              <h3 className="font-display text-2xl">{savedOnly ? "Your list is ready for a first pick" : "Nothing on this reel"}</h3>
+              <p className="mt-2 text-sm text-black/50">{savedOnly ? "Save a film and it will appear here." : "Try another date, venue, or search."}</p>
+              {savedOnly ? (
+                <Button variant="outline" render={<Link href="/#showtimes" />} className="mt-5 rounded-full border-black/20 bg-transparent">
+                  Browse showtimes
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => { setQuery(""); setVenue("All venues"); }}
+                  className="mt-5 rounded-full border-black/20 bg-transparent">Clear filters</Button>
+              )}
             </div>
           </div>
         )}
