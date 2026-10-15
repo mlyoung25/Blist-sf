@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compareMovies,
-  movieProminence,
   movieRatingScore,
-  movieSortCategory,
+  movieRelevantDate,
   movieStartMonth,
   sortMovies,
 } from "./movie-sort.ts";
@@ -53,22 +52,24 @@ function movie(id: string, overrides: Partial<Movie> = {}): Movie {
     overview: null,
     posterUrl: null,
     ratings: { imdb: 7 },
+    sceneFSlug: `${id.toLowerCase().replaceAll(" ", "-")}-2026`,
+    onFilm: { matched: false, sourceUrl: null },
     runs: [run()],
     ...overrides,
   };
 }
 
-test("sort categories prioritize one-day today, multi-day, then other-day movies", () => {
-  const today = movie("today");
-  const multi = movie("multi", {
+test("earliest relevant showing date sorts before IMDb rating within a month", () => {
+  const earlierLowRated = movie("Earlier low rated", {
+    ratings: { imdb: 2 },
     runs: [run({
       startDate: "2026-10-16",
-      endDate: "2026-10-20",
-      durationDays: 5,
+      endDate: "2026-10-16",
       dates: [{ date: "2026-10-16", showtimes: [] }],
     })],
   });
-  const later = movie("later", {
+  const laterHighRated = movie("Later high rated", {
+    ratings: { imdb: 10 },
     runs: [run({
       startDate: "2026-10-18",
       endDate: "2026-10-18",
@@ -76,42 +77,45 @@ test("sort categories prioritize one-day today, multi-day, then other-day movies
     })],
   });
 
-  assert.equal(movieSortCategory(today, "2026-10-15"), "one-day-today");
-  assert.equal(movieSortCategory(multi, "2026-10-15"), "multi-day");
-  assert.equal(movieSortCategory(later, "2026-10-15"), "remaining");
-  assert.deepEqual(sortMovies([later, multi, today], "2026-10-15").map((item) => item.id), ["today", "multi", "later"]);
+  assert.deepEqual(
+    sortMovies([laterHighRated, earlierLowRated]).map((item) => item.id),
+    ["Earlier low rated", "Later high rated"],
+  );
 });
 
-test("IMDb ratings sort descending within a category with unavailable ratings last", () => {
+test("IMDb ratings sort descending only for the same relevant day", () => {
   const high = movie("IMDb 9", { ratings: { imdb: 9 } });
   const lower = movie("IMDb 8", { ratings: { imdb: 8 } });
   const unavailable = movie("Unavailable", { ratings: { imdb: null } });
 
   assert.equal(movieRatingScore(high), 9);
   assert.deepEqual(
-    sortMovies([unavailable, lower, high], "2026-10-15").map((item) => item.id),
+    sortMovies([unavailable, lower, high]).map((item) => item.id),
     ["IMDb 9", "IMDb 8", "Unavailable"],
   );
 });
 
-test("prominence deterministically breaks rating ties", () => {
-  const baseRun = run({
-    startDate: "2026-10-16",
-    endDate: "2026-10-18",
-    durationDays: 3,
-    dates: [{ date: "2026-10-16", showtimes: [] }],
+test("selected date becomes the relevant date and stable title breaks ties", () => {
+  const alpha = movie("Alpha", {
+    runs: [run({
+      startDate: "2026-10-15",
+      endDate: "2026-10-20",
+      durationDays: 6,
+      dates: [
+        { date: "2026-10-15", showtimes: [] },
+        { date: "2026-10-20", showtimes: [] },
+      ],
+    })],
   });
-  const broad = movie("Broad", { runs: [baseRun, { ...baseRun, venueId: "balboa", venueName: "Balboa Theatre" }] });
-  const frequent = movie("Frequent", {
-    runs: [{ ...baseRun, dates: [{ date: "2026-10-16", showtimes: [run().dates[0].showtimes[0], { ...run().dates[0].showtimes[0], id: "show-2" }] }] }],
+  const beta = movie("Beta", {
+    runs: [run({
+      startDate: "2026-10-20",
+      endDate: "2026-10-20",
+      dates: [{ date: "2026-10-20", showtimes: [] }],
+    })],
   });
-  const long = movie("Long", { runs: [{ ...baseRun, endDate: "2026-10-20", durationDays: 5 }] });
-  const ordinary = movie("Ordinary", { runs: [baseRun] });
-
-  assert.deepEqual(movieProminence(broad), { theaterCount: 2, showtimeCount: 0, longestRunDays: 3 });
-  assert.ok(compareMovies(broad, frequent, "2026-10-15") < 0);
-  assert.ok(compareMovies(frequent, long, "2026-10-15") < 0);
-  assert.ok(compareMovies(long, ordinary, "2026-10-15") < 0);
+  assert.equal(movieRelevantDate(alpha, "2026-10-20"), "2026-10-20");
+  assert.ok(compareMovies(alpha, beta, "2026-10-20") < 0);
 });
 
 test("pins remain above the computed order", () => {
@@ -123,11 +127,11 @@ test("pins remain above the computed order", () => {
       dates: [{ date: "2026-10-18", showtimes: [] }],
     })],
   });
-  assert.deepEqual(sortMovies([today, future], "2026-10-15", ["Future"]).map((item) => item.id), ["Future", "Today"]);
+  assert.deepEqual(sortMovies([today, future], null, ["Future"]).map((item) => item.id), ["Future", "Today"]);
 });
 
-test("global pins precede month-grouped movies with priorities confined to each month", () => {
-  const octoberMulti = movie("October multi", {
+test("global pins precede chronological month and showing-date groups", () => {
+  const octoberLater = movie("October later", {
     ratings: { imdb: 5 },
     runs: [run({
       startDate: "2026-10-20",
@@ -136,7 +140,7 @@ test("global pins precede month-grouped movies with priorities confined to each 
       dates: [{ date: "2026-10-20", showtimes: [] }],
     })],
   });
-  const octoberRated = movie("October rated", {
+  const octoberEarlier = movie("October earlier", {
     ratings: { imdb: 9 },
     runs: [run({
       startDate: "2026-10-18",
@@ -170,16 +174,16 @@ test("global pins precede month-grouped movies with priorities confined to each 
   });
 
   const sorted = sortMovies(
-    [decemberPinned, novemberRated, octoberRated, novemberPinned, octoberMulti],
-    "2026-10-15",
+    [decemberPinned, novemberRated, octoberEarlier, novemberPinned, octoberLater],
+    null,
     ["November pinned", "December pinned"],
   );
 
   assert.deepEqual(sorted.map((item) => item.id), [
-    "December pinned",
     "November pinned",
-    "October multi",
-    "October rated",
+    "December pinned",
+    "October earlier",
+    "October later",
     "November rated",
   ]);
   assert.deepEqual(sorted.slice(2).map(movieStartMonth), [
@@ -187,5 +191,5 @@ test("global pins precede month-grouped movies with priorities confined to each 
     "2026-10",
     "2026-11",
   ]);
-  assert.equal(movieStartMonth(octoberMulti), "2026-10");
+  assert.equal(movieStartMonth(octoberLater), "2026-10");
 });

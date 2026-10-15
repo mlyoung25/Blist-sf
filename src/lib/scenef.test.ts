@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AMC_VENUES,
+  applyOnFilmMembership,
   excludeMoviesPlayingAtAmc,
   imdbMovieUrl,
   isLikelyFilm,
   letterboxdMovieUrl,
   normalizeFeeds,
   normalizeMovieTitle,
+  parseOnFilmSlugs,
+  SCENEF_ON_FILM_URL,
   titlesMatch,
   tmdbMovieUrl,
   VENUES,
@@ -61,6 +64,7 @@ function venue(id: string) {
 
 const realFilm = {
   key: "tmdb-1",
+  slug: "a-real-film-2026",
   tmdbId: 1,
   imdbId: "tt0000001",
   title: "A Real Film",
@@ -172,6 +176,34 @@ test("movie links use direct IDs with safe search fallbacks", () => {
   assert.match(letterboxdMovieUrl(unidentified), /^https:\/\/letterboxd\.com\/search\/films\//);
   assert.match(tmdbMovieUrl(unidentified), /^https:\/\/www\.themoviedb\.org\/search\/movie\?/);
   assert.match(imdbMovieUrl(unidentified), /^https:\/\/www\.imdb\.com\/find\/\?/);
+});
+
+test("On Film membership comes only from rendered SceneF film links with provenance", () => {
+  const html = `
+    <main>
+      <a href="/film/a-real-film-2026">A Real Film</a>
+      <a href="/film/a-real-film-2026">A Real Film again</a>
+    </main>
+    <script>const fabricated = '<a href="/film/not-rendered-2026">Not rendered</a>';</script>
+  `;
+  const slugs = parseOnFilmSlugs(html);
+  assert.deepEqual([...slugs], ["a-real-film-2026"]);
+
+  const payload = applyOnFilmMembership(normalizeFeeds([{
+    venue: venue("roxie"),
+    feed: feed("roxie", [realFilm, { key: "other", slug: "other-film-2026", title: "Other Film", year: 2026 }], [
+      screening("film", "tmdb-1", "roxie", "2026-10-15"),
+      screening("other", "other", "roxie", "2026-10-16"),
+    ]),
+  }]), slugs, "2026-10-15T10:00:00Z");
+
+  assert.equal(payload.movies.find((movie) => movie.title === "A Real Film")?.onFilm.matched, true);
+  assert.equal(payload.movies.find((movie) => movie.title === "Other Film")?.onFilm.matched, false);
+  assert.deepEqual(payload.onFilmSource, {
+    sourceUrl: SCENEF_ON_FILM_URL,
+    fetchedAt: "2026-10-15T10:00:00Z",
+    matchedMovieCount: 1,
+  });
 });
 
 test("non-film event labels and secret movies are excluded", () => {

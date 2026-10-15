@@ -44,11 +44,18 @@ not replace the access application.
 
 Pinned cards remain in a global section above the computed list. Unpinned cards group
 chronologically by the month of their earliest theater-run start date; a run crossing
-into another month remains in its start month. Within each month, cards use three
-deterministic categories: one-day runs showing today, multi-day runs, then remaining
-one-day runs on other dates. Within a category, the available IMDb score sorts
-descending. Exact rating ties use, in order: number of theaters, number of showtimes,
-longest run, earliest run date, title, then stable movie ID.
+into another month remains in its start month. Within each month, the earliest relevant
+showing date sorts first, followed by IMDb score for movies on that same day, title,
+then stable movie ID. Selecting a date bubble filters to movies playing that day.
+
+## On Film
+
+On Film membership is matched only by SceneF's own film slug from the rendered,
+server-authored [`/on-film`](https://scenef.com/on-film) page. The app does not infer
+membership from age, genre, repertory tags, or theater. The page is cached alongside
+the listings for 12 hours; fetch failures are isolated and reported in the source
+details instead of marking unverified movies. Matching cards receive an accessible
+yellow treatment and can be filtered with **On Film only**.
 
 The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
 browser extensions can inject attributes there before hydration. No app subtree uses
@@ -65,10 +72,10 @@ rejects the extra call and handles daylight-saving transitions without manually
 changing the schedule. Configure `CRON_SECRET` in the deployment so Vercel sends
 `Authorization: Bearer <CRON_SECRET>`.
 
-The refresh invalidates the shared SceneF cache and prewarms all 10 theater sources
-plus both AMC comparison sources. SceneF's per-screening freshness, confidence,
-verification timestamp, and stable `/go/` ticket URL remain attached to normalized
-runs.
+The refresh invalidates the shared SceneF cache and prewarms all 10 theater sources,
+the On Film page, and both AMC comparison sources. SceneF's per-screening freshness,
+confidence, verification timestamp, and stable `/go/` ticket URL remain attached to
+normalized runs.
 
 ## Run locally
 

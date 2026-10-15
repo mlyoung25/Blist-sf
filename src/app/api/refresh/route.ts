@@ -30,6 +30,8 @@ export async function GET(request: Request) {
     dataAsOf: payload.dataAsOf,
     movieCountAfterAmcFilter: payload.movies.length,
     excludedAmcMovieCount: payload.amcFilter.excludedMovieCount,
+    onFilmMovieCount: payload.onFilmSource.matchedMovieCount,
+    onFilmSourceError: payload.onFilmSource.error ?? null,
     sourceCount: payload.sources.length,
   });
 }

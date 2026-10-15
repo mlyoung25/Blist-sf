@@ -1,29 +1,7 @@
 import type { Movie } from "./scenef";
 
-export type MovieSortCategory = "one-day-today" | "multi-day" | "remaining";
-
-export function movieSortCategory(movie: Movie, today: string): MovieSortCategory {
-  const hasOneDayToday = movie.runs.some((run) => (
-    run.durationDays === 1 && run.dates.some((date) => date.date === today)
-  ));
-  if (hasOneDayToday) return "one-day-today";
-  if (movie.runs.some((run) => run.durationDays > 1)) return "multi-day";
-  return "remaining";
-}
-
 export function movieRatingScore(movie: Movie) {
   return movie.ratings.imdb;
-}
-
-export function movieProminence(movie: Movie) {
-  return {
-    theaterCount: movie.runs.length,
-    showtimeCount: movie.runs.reduce(
-      (total, run) => total + run.dates.reduce((sum, date) => sum + date.showtimes.length, 0),
-      0,
-    ),
-    longestRunDays: Math.max(...movie.runs.map((run) => run.durationDays)),
-  };
 }
 
 export function movieStartDate(movie: Movie) {
@@ -34,12 +12,15 @@ export function movieStartMonth(movie: Movie) {
   return movieStartDate(movie).slice(0, 7);
 }
 
-export function compareMovies(first: Movie, second: Movie, today: string) {
-  const categories: MovieSortCategory[] = ["one-day-today", "multi-day", "remaining"];
-  const categoryDifference = categories.indexOf(movieSortCategory(first, today))
-    - categories.indexOf(movieSortCategory(second, today));
-  if (categoryDifference !== 0) return categoryDifference;
+export function movieRelevantDate(movie: Movie, selectedDate: string | null = null) {
+  const dates = movie.runs.flatMap((run) => run.dates.map((date) => date.date)).sort();
+  if (selectedDate && dates.includes(selectedDate)) return selectedDate;
+  return dates[0] ?? movieStartDate(movie);
+}
 
+export function compareMovies(first: Movie, second: Movie, selectedDate: string | null = null) {
+  const dateDifference = movieRelevantDate(first, selectedDate).localeCompare(movieRelevantDate(second, selectedDate));
+  if (dateDifference !== 0) return dateDifference;
   const firstRating = movieRatingScore(first);
   const secondRating = movieRatingScore(second);
   if (firstRating !== secondRating) {
@@ -48,25 +29,19 @@ export function compareMovies(first: Movie, second: Movie, today: string) {
     return secondRating - firstRating;
   }
 
-  const firstProminence = movieProminence(first);
-  const secondProminence = movieProminence(second);
-  return secondProminence.theaterCount - firstProminence.theaterCount
-    || secondProminence.showtimeCount - firstProminence.showtimeCount
-    || secondProminence.longestRunDays - firstProminence.longestRunDays
-    || movieStartDate(first).localeCompare(movieStartDate(second))
-    || first.title.localeCompare(second.title)
+  return first.title.localeCompare(second.title)
     || first.id.localeCompare(second.id);
 }
 
-export function sortMovies(movies: Movie[], today: string, pinnedIds: string[] = []) {
+export function sortMovies(movies: Movie[], selectedDate: string | null = null, pinnedIds: string[] = []) {
   const pinned = new Set(pinnedIds);
   return [...movies].sort((first, second) => {
     const firstPinned = pinned.has(first.id);
     const secondPinned = pinned.has(second.id);
     const pinnedDifference = Number(secondPinned) - Number(firstPinned);
     if (pinnedDifference !== 0) return pinnedDifference;
-    if (firstPinned && secondPinned) return compareMovies(first, second, today);
+    if (firstPinned && secondPinned) return compareMovies(first, second, selectedDate);
     return movieStartMonth(first).localeCompare(movieStartMonth(second))
-      || compareMovies(first, second, today);
+      || compareMovies(first, second, selectedDate);
   });
 }

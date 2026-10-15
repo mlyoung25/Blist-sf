@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExternalLink, EyeOff, Pin, Search, X } from "lucide-react";
-import { movieSortCategory, movieStartDate, movieStartMonth, sortMovies } from "@/lib/movie-sort";
+import { movieStartDate, movieStartMonth, sortMovies } from "@/lib/movie-sort";
 import {
   imdbMovieUrl,
   letterboxdDirectorUrl,
@@ -85,6 +85,8 @@ export default function ShowtimesApp() {
   const [showAllHidden, setShowAllHidden] = useState(false);
   const [selectedVenues, setSelectedVenues] = useState<string[]>([]);
   const [runFilter, setRunFilter] = useState<RunFilter>("all");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [onFilmOnly, setOnFilmOnly] = useState(false);
   const [pinned, setPinned] = useState<string[]>([]);
   const [hidden, setHidden] = useState<string[]>([]);
   const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
@@ -130,16 +132,26 @@ export default function ShowtimesApp() {
         const matchesRun = runFilter === "all"
           || (runFilter === "one-day" && oneDay)
           || (runFilter === "multi-day" && !oneDay);
+        const matchesDate = selectedDate === null
+          || movie.runs.some((run) => run.dates.some((date) => date.date === selectedDate));
+        const matchesOnFilm = !onFilmOnly || movie.onFilm.matched;
         const haystack = [
           movie.title,
           movie.directors.join(" "),
           movie.genres.join(" "),
           movie.runs.map((run) => run.venueName).join(" "),
         ].join(" ").toLowerCase();
-        return matchesHidden && matchesVenues && matchesRun && haystack.includes(needle);
+        return matchesHidden && matchesVenues && matchesRun && matchesDate && matchesOnFilm && haystack.includes(needle);
       });
-    return sortMovies(filtered, payload.range.start, pinned);
-  }, [hidden, payload, pinned, query, runFilter, selectedVenues, showAllHidden]);
+    return sortMovies(filtered, selectedDate, pinned);
+  }, [hidden, onFilmOnly, payload, pinned, query, runFilter, selectedDate, selectedVenues, showAllHidden]);
+
+  const availableDates = useMemo(() => {
+    if (!payload) return [];
+    return [...new Set(payload.movies.flatMap((movie) => (
+      movie.runs.flatMap((run) => run.dates.map((date) => date.date))
+    )))].sort();
+  }, [payload]);
 
   const selectedMovie = payload?.movies.find((movie) => movie.id === selectedMovieId) ?? null;
   const pinnedMovies = visibleMovies.filter((movie) => pinned.includes(movie.id));
@@ -172,9 +184,11 @@ export default function ShowtimesApp() {
         key={movie.id}
         data-movie-id={movie.id}
         data-run-type={oneDay ? "one-day" : "multi-day"}
-        data-sort-category={movieSortCategory(movie, payload?.range.start ?? "")}
+        data-on-film={movie.onFilm.matched ? "true" : "false"}
         className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-zinc-900 ${
-          oneDay ? "border-cyan-400/70 ring-1 ring-cyan-400/20" : "border-white/10"
+          movie.onFilm.matched
+            ? "border-yellow-400/70 ring-1 ring-yellow-400/15"
+            : oneDay ? "border-cyan-400/70 ring-1 ring-cyan-400/20" : "border-white/10"
         }`}
       >
         <button
@@ -199,6 +213,15 @@ export default function ShowtimesApp() {
                 style={{ backgroundColor: "#083344", color: "#cffafe" }}
               >
                 One-day event
+              </span>
+            )}
+            {movie.onFilm.matched && (
+              <span
+                className="absolute right-3 top-3 rounded-full border border-yellow-300/60 px-2.5 py-1 text-[11px] font-semibold"
+                style={{ backgroundColor: "#422006", color: "#fef9c3" }}
+                title="Verified on SceneF's On Film page"
+              >
+                On Film
               </span>
             )}
           </div>
@@ -268,7 +291,7 @@ export default function ShowtimesApp() {
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-4 text-zinc-100 md:px-8 md:py-6">
       <section className="mx-auto max-w-7xl">
-        <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+        <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
           <label className="relative">
             <span className="sr-only">Search movies</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
@@ -323,6 +346,16 @@ export default function ShowtimesApp() {
           <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
             <input
               type="checkbox"
+              checked={onFilmOnly}
+              onChange={(event) => setOnFilmOnly(event.target.checked)}
+              className="accent-yellow-400"
+            />
+            On Film only
+          </label>
+
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
+            <input
+              type="checkbox"
               checked={showAllHidden}
               onChange={(event) => {
                 setLoading(true);
@@ -335,6 +368,42 @@ export default function ShowtimesApp() {
             Show all hidden
           </label>
         </div>
+
+        <nav
+          aria-label="Filter showtimes by date"
+          className="-mx-4 overflow-x-auto border-b border-white/10 px-4 py-2 md:-mx-8 md:px-8"
+        >
+          <div className="flex min-w-max gap-1.5">
+            <button
+              type="button"
+              aria-pressed={selectedDate === null}
+              onClick={() => setSelectedDate(null)}
+              className={`rounded-full border px-3 py-1.5 text-xs ${
+                selectedDate === null
+                  ? "border-white bg-white text-zinc-950"
+                  : "border-white/15 bg-zinc-900 text-zinc-400 hover:border-white/30 hover:text-white"
+              }`}
+            >
+              All dates
+            </button>
+            {availableDates.map((date) => (
+              <button
+                type="button"
+                key={date}
+                aria-pressed={selectedDate === date}
+                aria-label={`Show movies playing ${formatDate(date, true)}`}
+                onClick={() => setSelectedDate(date)}
+                className={`rounded-full border px-3 py-1.5 text-xs ${
+                  selectedDate === date
+                    ? "border-white bg-white text-zinc-950"
+                    : "border-white/15 bg-zinc-900 text-zinc-400 hover:border-white/30 hover:text-white"
+                }`}
+              >
+                {formatDate(date)}
+              </button>
+            ))}
+          </div>
+        </nav>
 
         <div className="flex min-h-12 items-center justify-between gap-4 py-3 text-xs text-zinc-500">
           <span>
@@ -395,6 +464,15 @@ export default function ShowtimesApp() {
             <p className="mt-2">
               An ellipsis means the movie reaches that theater&apos;s last published SceneF date. SceneF event filtering removed{" "}
               {payload.nonFilmFilter.excludedMovieCount} non-film or secret listings.
+            </p>
+            <p className="mt-2">
+              On Film membership comes only from{" "}
+              <a className="underline hover:text-zinc-300" href={payload.onFilmSource.sourceUrl} target="_blank" rel="noreferrer">
+                SceneF&apos;s On Film page
+              </a>
+              {payload.onFilmSource.error
+                ? `; unavailable for this refresh: ${payload.onFilmSource.error}`
+                : `; ${payload.onFilmSource.matchedMovieCount} current movies matched at ${payload.onFilmSource.fetchedAt ? new Date(payload.onFilmSource.fetchedAt).toLocaleString() : "an unknown time"}.`}
             </p>
             <ul className="mt-3 space-y-1">
               {payload.sources.map((source) => (

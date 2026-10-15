@@ -1,5 +1,6 @@
 export const SCENEF_BASE_URL = "https://scenef.com";
 export const SCENEF_CACHE_TAG = "scenef-showtimes";
+export const SCENEF_ON_FILM_URL = `${SCENEF_BASE_URL}/on-film`;
 
 export type VenueConfig = {
   id: string;
@@ -28,6 +29,7 @@ export const AMC_VENUES: readonly VenueConfig[] = [
 
 export type SceneFFilm = {
   key: string;
+  slug?: string;
   tmdbId?: number;
   imdbId?: string;
   title: string;
@@ -107,6 +109,7 @@ export type TheaterRun = {
 
 export type Movie = {
   id: string;
+  sceneFSlug: string | null;
   tmdbId: number | null;
   imdbId: string | null;
   title: string;
@@ -120,6 +123,10 @@ export type Movie = {
   posterUrl: string | null;
   ratings: {
     imdb: number | null;
+  };
+  onFilm: {
+    matched: boolean;
+    sourceUrl: string | null;
   };
   runs: TheaterRun[];
 };
@@ -148,6 +155,12 @@ export type MoviesPayload = {
   nonFilmFilter: {
     excludedMovieCount: number;
     excludedTitles: string[];
+  };
+  onFilmSource: {
+    sourceUrl: string;
+    fetchedAt: string | null;
+    matchedMovieCount: number;
+    error?: string;
   };
 };
 
@@ -203,6 +216,40 @@ export function imdbMovieUrl(movie: Pick<Movie, "title" | "imdbId">) {
 
 export function letterboxdDirectorUrl(director: string) {
   return `https://letterboxd.com/search/${encodeURIComponent(director)}/`;
+}
+
+export function parseOnFilmSlugs(html: string) {
+  const renderedHtml = html.match(/<main\b[\s\S]*?<\/main>/i)?.[0] ?? html;
+  return new Set(
+    [...renderedHtml.matchAll(/href=["']\/film\/([a-z0-9][a-z0-9-]*)["']/gi)]
+      .map((match) => match[1].toLowerCase()),
+  );
+}
+
+export function applyOnFilmMembership(
+  payload: MoviesPayload,
+  slugs: ReadonlySet<string>,
+  fetchedAt: string,
+): MoviesPayload {
+  const movies = payload.movies.map((movie) => {
+    const matched = movie.sceneFSlug !== null && slugs.has(movie.sceneFSlug.toLowerCase());
+    return {
+      ...movie,
+      onFilm: {
+        matched,
+        sourceUrl: matched ? SCENEF_ON_FILM_URL : null,
+      },
+    };
+  });
+  return {
+    ...payload,
+    movies,
+    onFilmSource: {
+      sourceUrl: SCENEF_ON_FILM_URL,
+      fetchedAt,
+      matchedMovieCount: movies.filter((movie) => movie.onFilm.matched).length,
+    },
+  };
 }
 
 function titleMatchKeys(title: string) {
@@ -315,6 +362,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         movieEntry = {
           movie: {
             id: identity,
+            sceneFSlug: film.slug ?? null,
             tmdbId: film.tmdbId ?? null,
             imdbId: film.imdbId ?? null,
             title: film.title,
@@ -329,6 +377,10 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             ratings: {
               imdb: film.ratings?.imdb ?? null,
             },
+            onFilm: {
+              matched: false,
+              sourceUrl: null,
+            },
           },
           runs: new Map(),
         };
@@ -337,6 +389,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         if (!movieEntry.movie.posterUrl && film.posterUrl) movieEntry.movie.posterUrl = film.posterUrl;
         if (!movieEntry.movie.overview && film.overview) movieEntry.movie.overview = film.overview;
         if (movieEntry.movie.directors.length === 0 && film.directors) movieEntry.movie.directors = film.directors;
+        if (movieEntry.movie.sceneFSlug === null && film.slug) movieEntry.movie.sceneFSlug = film.slug;
         if (movieEntry.movie.tmdbId === null && film.tmdbId) movieEntry.movie.tmdbId = film.tmdbId;
         if (movieEntry.movie.imdbId === null && film.imdbId) movieEntry.movie.imdbId = film.imdbId;
         if (movieEntry.movie.ratings.imdb === null && film.ratings?.imdb !== undefined) {
@@ -429,6 +482,11 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
       excludedMovieCount: excludedNonFilmTitles.size,
       excludedTitles: [...excludedNonFilmTitles].sort(),
     },
+    onFilmSource: {
+      sourceUrl: SCENEF_ON_FILM_URL,
+      fetchedAt: null,
+      matchedMovieCount: 0,
+    },
   };
 }
 
@@ -454,6 +512,10 @@ export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: Feed
   return {
     ...payload,
     movies,
+    onFilmSource: {
+      ...payload.onFilmSource,
+      matchedMovieCount: movies.filter((movie) => movie.onFilm.matched).length,
+    },
     sources: [...payload.sources, ...sourceStatus(amcFeeds)].sort((first, second) => first.venueName.localeCompare(second.venueName)),
     amcFilter: {
       enabled: true,
@@ -478,12 +540,44 @@ async function fetchVenue(venue: VenueConfig): Promise<FeedWithVenue> {
   return { venue, feed: (await response.json()) as SceneFFeed };
 }
 
+async function fetchOnFilmMembership() {
+  const response = await fetch(SCENEF_ON_FILM_URL, {
+    headers: { Accept: "text/html" },
+    next: {
+      revalidate: 43_200,
+      tags: [SCENEF_CACHE_TAG, "scenef-on-film"],
+    },
+  });
+  if (!response.ok) throw new Error(`SceneF On Film returned HTTP ${response.status}`);
+  const slugs = parseOnFilmSlugs(await response.text());
+  if (slugs.size === 0) throw new Error("SceneF On Film returned no verifiable film links.");
+  return {
+    slugs,
+    fetchedAt: response.headers.get("date") ?? new Date().toISOString(),
+  };
+}
+
 export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<MoviesPayload> {
-  const settled = await Promise.allSettled(VENUES.map(fetchVenue));
+  const [settled, onFilmResult] = await Promise.all([
+    Promise.allSettled(VENUES.map(fetchVenue)),
+    fetchOnFilmMembership().then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    ),
+  ]);
   const feeds = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   if (feeds.length === 0) throw new Error("Every SceneF theater request failed.");
 
-  const payload = normalizeFeeds(feeds);
+  const normalizedPayload = normalizeFeeds(feeds);
+  const payload = onFilmResult.ok
+    ? applyOnFilmMembership(normalizedPayload, onFilmResult.value.slugs, onFilmResult.value.fetchedAt)
+    : {
+        ...normalizedPayload,
+        onFilmSource: {
+          ...normalizedPayload.onFilmSource,
+          error: onFilmResult.error instanceof Error ? onFilmResult.error.message : "SceneF On Film request failed",
+        },
+      };
   const failedSources = settled.flatMap((result, index) => {
     if (result.status === "fulfilled") return [];
     const venue = VENUES[index];

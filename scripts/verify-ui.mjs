@@ -28,12 +28,34 @@ const multiDayCount = defaultPayload.movies.length - oneDayCount;
 const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0 && movie.tmdbId);
 const imdbRated = defaultPayload.movies.find((movie) => movie.ratings.imdb !== null);
 const imdbUnavailable = defaultPayload.movies.find((movie) => movie.ratings.imdb === null);
+const onFilmMovies = defaultPayload.movies.filter((movie) => movie.onFilm.matched);
+const availableDates = [...new Set(defaultPayload.movies.flatMap((movie) => (
+  movie.runs.flatMap((run) => run.dates.map((date) => date.date))
+)))].sort();
 assert.ok(multi);
 assert.ok(imdbRated);
 assert.ok(imdbUnavailable);
+assert.ok(onFilmMovies.length > 0);
+assert.equal(defaultPayload.onFilmSource.error, undefined);
+assert.equal(defaultPayload.onFilmSource.matchedMovieCount, onFilmMovies.length);
+assert.equal(onFilmMovies.every((movie) => movie.onFilm.sourceUrl === "https://scenef.com/on-film"), true);
 
 function ratingScore(movie) {
   return movie.ratings.imdb;
+}
+
+function relevantDate(movie) {
+  return movie.runs.flatMap((run) => run.dates.map((date) => date.date)).sort()[0];
+}
+
+function formatDate(date, includeYear = false) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: includeYear ? "numeric" : undefined,
+    timeZone: "UTC",
+  }).format(new Date(`${date}T12:00:00Z`));
 }
 
 function relativeLuminance([red, green, blue]) {
@@ -90,29 +112,25 @@ try {
   );
   assert.equal(await page.getByText("Castro Theatre", { exact: true }).count(), 0);
 
-  const orderedIds = await page.locator("article").evaluateAll((articles) => articles.map((article) => ({
-    id: article.dataset.movieId,
-    category: article.dataset.sortCategory,
-  })));
-  const categoryRanks = { "one-day-today": 0, "multi-day": 1, "remaining": 2 };
+  const orderedIds = await page.locator("article").evaluateAll((articles) => articles.map((article) => article.dataset.movieId));
   const movieById = new Map(defaultPayload.movies.map((movie) => [movie.id, movie]));
   const startMonth = (id) => movieById.get(id).runs.map((run) => run.startDate).sort()[0].slice(0, 7);
-  assert.equal(orderedIds.every((item, index) => (
-    index === 0 || startMonth(orderedIds[index - 1].id) <= startMonth(item.id)
+  assert.equal(orderedIds.every((id, index) => (
+    index === 0 || startMonth(orderedIds[index - 1]) <= startMonth(id)
   )), true);
-  assert.equal(orderedIds.every((item, index) => (
+  assert.equal(orderedIds.every((id, index) => (
     index === 0
-    || startMonth(orderedIds[index - 1].id) !== startMonth(item.id)
-    || categoryRanks[orderedIds[index - 1].category] <= categoryRanks[item.category]
+    || startMonth(orderedIds[index - 1]) !== startMonth(id)
+    || relevantDate(movieById.get(orderedIds[index - 1])) <= relevantDate(movieById.get(id))
   )), true);
-  assert.equal(orderedIds.every((item, index) => {
+  assert.equal(orderedIds.every((id, index) => {
     if (
       index === 0
-      || startMonth(orderedIds[index - 1].id) !== startMonth(item.id)
-      || orderedIds[index - 1].category !== item.category
+      || startMonth(orderedIds[index - 1]) !== startMonth(id)
+      || relevantDate(movieById.get(orderedIds[index - 1])) !== relevantDate(movieById.get(id))
     ) return true;
-    const previous = ratingScore(movieById.get(orderedIds[index - 1].id));
-    const current = ratingScore(movieById.get(item.id));
+    const previous = ratingScore(movieById.get(orderedIds[index - 1]));
+    const current = ratingScore(movieById.get(id));
     return previous === null || current === null || previous >= current;
   }), true);
 
@@ -122,6 +140,40 @@ try {
   await unavailableCard.getByText("IMDb unavailable", { exact: true }).waitFor();
   assert.equal(await page.getByText(/^Letterboxd (?:unavailable|\d)/).count(), 0);
   assert.equal(await page.getByText("TMDB", { exact: true }).count(), 0);
+
+  const dateNav = page.getByRole("navigation", { name: "Filter showtimes by date" });
+  assert.equal(await dateNav.getByRole("button", { name: "All dates" }).getAttribute("aria-pressed"), "true");
+  assert.equal(await dateNav.getByRole("button").count(), availableDates.length + 1);
+  const selectedTestDate = availableDates.find((date) => {
+    const count = defaultPayload.movies.filter((movie) => (
+      movie.runs.some((run) => run.dates.some((item) => item.date === date))
+    )).length;
+    return count > 0 && count < defaultPayload.movies.length;
+  });
+  assert.ok(selectedTestDate);
+  const selectedDateButton = dateNav.getByRole("button", { name: `Show movies playing ${formatDate(selectedTestDate, true)}` });
+  await selectedDateButton.click();
+  const selectedDateCount = defaultPayload.movies.filter((movie) => (
+    movie.runs.some((run) => run.dates.some((item) => item.date === selectedTestDate))
+  )).length;
+  assert.equal(await page.locator("article").count(), selectedDateCount);
+  assert.equal(await selectedDateButton.getAttribute("aria-pressed"), "true");
+  await dateNav.getByRole("button", { name: "All dates" }).click();
+
+  await page.getByLabel("On Film only").check();
+  assert.equal(await page.locator("article").count(), onFilmMovies.length);
+  assert.equal(await page.locator("article[data-on-film='true']").count(), onFilmMovies.length);
+  assert.match(
+    await page.locator("article[data-on-film='true']").first().getAttribute("class"),
+    /border-yellow-400\/70/,
+  );
+  const onFilmBadge = page.locator("article[data-on-film='true']").first().getByText("On Film", { exact: true });
+  const onFilmColors = await onFilmBadge.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { foreground: style.color, background: style.backgroundColor };
+  });
+  assert.ok(contrast(rgb(onFilmColors.foreground), rgb(onFilmColors.background)) >= 4.5);
+  await page.getByLabel("On Film only").uncheck();
 
   const theaterDetails = page.locator("details").first();
   await theaterDetails.locator("summary").click();
@@ -233,6 +285,11 @@ try {
   await mobile.setViewportSize({ width: 390, height: 844 });
   await mobile.goto(baseUrl, { waitUntil: "networkidle" });
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  assert.equal(
+    await mobile.getByRole("navigation", { name: "Filter showtimes by date" })
+      .evaluate((element) => element.scrollWidth > element.clientWidth),
+    true,
+  );
   const mobileCardBox = await mobile.locator("article").first().boundingBox();
   assert.ok(mobileCardBox && mobileCardBox.width > 340 && mobileCardBox.width < 390);
 
@@ -252,10 +309,14 @@ try {
     oneDayBadgeContrast: Number(contrast(rgb(colors.foreground), rgb(colors.background)).toFixed(2)),
     theaterMultiselectUnionCount: unionCount,
     monthDividersValidated: true,
+    dateBubbleCount: availableDates.length + 1,
+    selectedDateCount,
+    onFilmMovieCount: onFilmMovies.length,
+    onFilmBadgeContrast: Number(contrast(rgb(onFilmColors.foreground), rgb(onFilmColors.background)).toFixed(2)),
     mobileCardWidth: Math.round(mobileCardBox.width),
     imdbRatingCoverage: defaultPayload.movies.filter((movie) => movie.ratings.imdb !== null).length,
     letterboxdAndTmdbRatingsHidden: true,
-    sortCategoriesVerified: true,
+    dateThenRatingSortVerified: true,
     externalLinkIconsVerified: true,
     hydrationErrors: hydrationErrors.length,
     consoleErrors: consoleErrors.length,
