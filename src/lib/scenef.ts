@@ -1,5 +1,5 @@
 export const SCENEF_BASE_URL = "https://scenef.com";
-export const WINDOW_DAYS = 14;
+export const SCENEF_CACHE_TAG = "scenef-showtimes";
 
 export type VenueConfig = {
   id: string;
@@ -19,6 +19,9 @@ export const VENUES: readonly VenueConfig[] = [
   { id: "regal-stonestown", name: "Regal Stonestown Galleria 12", isAmc: false },
   { id: "roxie", name: "Roxie Theatre", isAmc: false },
   { id: "vogue", name: "Vogue Theatre", isAmc: false },
+] as const;
+
+export const AMC_VENUES: readonly VenueConfig[] = [
   { id: "amc-kabuki", name: "AMC Kabuki 8", isAmc: true },
   { id: "amc-metreon", name: "AMC Metreon 16", isAmc: true },
 ] as const;
@@ -35,6 +38,13 @@ type SceneFFilm = {
   posterUrl?: string;
 };
 
+type Freshness = {
+  status?: string;
+  age_hours?: number;
+  retained?: boolean;
+  source_status?: string;
+};
+
 type SceneFScreening = {
   id: string;
   filmKey: string;
@@ -46,12 +56,7 @@ type SceneFScreening = {
   confidence?: string;
   source_tier?: string;
   verified_at?: string;
-  freshness?: {
-    status?: string;
-    age_hours?: number;
-    retained?: boolean;
-    source_status?: string;
-  };
+  freshness?: Freshness;
   note?: string;
 };
 
@@ -70,10 +75,31 @@ export type Showtime = {
   ticketUrl: string;
 };
 
-export type Listing = {
+export type RunDate = {
+  date: string;
+  showtimes: Showtime[];
+};
+
+export type TheaterRun = {
+  venueId: string;
+  venueName: string;
+  sourceUrl: string;
+  startDate: string;
+  endDate: string;
+  durationDays: number;
+  endsAtPublishedHorizon: boolean;
+  dates: RunDate[];
+  sourceTier: string | null;
+  confidence: string | null;
+  verifiedAt: string | null;
+  freshness: Freshness | null;
+  note: string | null;
+};
+
+export type Movie = {
   id: string;
-  filmKey: string;
   title: string;
+  normalizedTitle: string;
   directors: string[];
   year: number | null;
   runtimeMin: number | null;
@@ -81,18 +107,7 @@ export type Listing = {
   genres: string[];
   overview: string | null;
   posterUrl: string | null;
-  venueId: string;
-  venueName: string;
-  isAmc: boolean;
-  date: string;
-  showtimes: Showtime[];
-  tags: string[];
-  sourceUrl: string;
-  sourceTier: string | null;
-  confidence: string | null;
-  verifiedAt: string | null;
-  freshness: SceneFScreening["freshness"] | null;
-  note: string | null;
+  runs: TheaterRun[];
 };
 
 export type SourceStatus = {
@@ -100,23 +115,30 @@ export type SourceStatus = {
   venueName: string;
   sourceUrl: string;
   latestListingDate: string | null;
-  reachesWindowEnd: boolean;
   error?: string;
 };
 
-export type ListingsPayload = {
+export type MoviesPayload = {
   attribution: "Showtimes via SceneF.com";
   dataAsOf: string | null;
   range: { start: string; end: string; days: number };
   venues: VenueConfig[];
-  listings: Listing[];
+  movies: Movie[];
   sources: SourceStatus[];
+  amcFilter: {
+    enabled: boolean;
+    excludedMovieCount: number;
+    excludedTitles: string[];
+    sourceUrls: string[];
+  };
 };
 
-function addDays(date: string, days: number) {
-  const value = new Date(`${date}T12:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
+type FeedWithVenue = { venue: VenueConfig; feed: SceneFFeed };
+
+function calendarDays(start: string, end: string) {
+  const first = new Date(`${start}T12:00:00Z`);
+  const last = new Date(`${end}T12:00:00Z`);
+  return Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
 }
 
 function timeLabel(startsAt: string) {
@@ -127,143 +149,238 @@ function timeLabel(startsAt: string) {
   }).format(new Date(startsAt));
 }
 
-export function normalizeFeeds(
-  feeds: Array<{ venue: VenueConfig; feed: SceneFFeed }>,
-  days = WINDOW_DAYS,
-): ListingsPayload {
-  const start = feeds
-    .map(({ feed }) => feed.tonight_is.night)
-    .sort()
-    .at(-1);
+export function normalizeMovieTitle(title: string) {
+  return title
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase("en-US")
+    .replace(/&/g, " and ")
+    .replace(/['’‘`]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
 
-  if (!start) {
-    throw new Error("SceneF returned no calendar start date.");
+function titleMatchKeys(title: string) {
+  const keys = new Set<string>();
+  const normalized = normalizeMovieTitle(title);
+  if (!normalized) return keys;
+  keys.add(normalized);
+  if (normalized.startsWith("the ")) keys.add(normalized.slice(4));
+
+  const formatSuffix = /\s+(?:imax(?:\s+3d)?|dolby\s+cinema|3d|4dx|screenx|open\s+captions?|closed\s+captions?|fan\s+event|early\s+access\s+screenings?)$/;
+  let withoutFormat = normalized;
+  while (formatSuffix.test(withoutFormat)) {
+    withoutFormat = withoutFormat.replace(formatSuffix, "").trim();
+    if (withoutFormat) keys.add(withoutFormat);
   }
 
-  const end = addDays(start, days - 1);
-  const attribution = feeds[0]?.feed.attribution;
-  if (attribution !== "Showtimes via SceneF.com") {
+  return keys;
+}
+
+export function titlesMatch(first: string, second: string) {
+  const firstKeys = titleMatchKeys(first);
+  const secondKeys = titleMatchKeys(second);
+  return [...firstKeys].some((key) => secondKeys.has(key));
+}
+
+function movieIdentity(film: SceneFFilm) {
+  return `${normalizeMovieTitle(film.title)}:${film.year ?? "unknown"}`;
+}
+
+function sourceStatus(feeds: FeedWithVenue[]) {
+  return feeds.map(({ venue, feed }) => ({
+    venueId: venue.id,
+    venueName: venue.name,
+    sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
+    latestListingDate: feed.screenings.map((screening) => screening.nightOf).sort().at(-1) ?? null,
+  }));
+}
+
+export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
+  const start = feeds.map(({ feed }) => feed.tonight_is.night).sort().at(-1);
+  if (!start) throw new Error("SceneF returned no calendar start date.");
+
+  if (feeds.some(({ feed }) => feed.attribution !== "Showtimes via SceneF.com")) {
     throw new Error("SceneF returned an unexpected or missing attribution.");
   }
-  const listings = new Map<string, Listing>();
-  const sources: SourceStatus[] = [];
+
+  const statuses = sourceStatus(feeds);
+  const horizonByVenue = new Map(statuses.map((status) => [status.venueId, status.latestListingDate]));
+  const movieMap = new Map<string, {
+    movie: Omit<Movie, "runs">;
+    runs: Map<string, {
+      run: Omit<TheaterRun, "dates" | "startDate" | "endDate" | "durationDays" | "endsAtPublishedHorizon">;
+      dates: Map<string, Showtime[]>;
+    }>;
+  }>();
 
   for (const { venue, feed } of feeds) {
     const films = new Map(feed.films.map((film) => [film.key, film]));
-    const latestListingDate = feed.screenings
-      .map((screening) => screening.nightOf)
-      .sort()
-      .at(-1) ?? null;
-
-    sources.push({
-      venueId: venue.id,
-      venueName: venue.name,
-      sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
-      latestListingDate,
-      reachesWindowEnd: latestListingDate !== null && latestListingDate >= end,
-    });
 
     for (const screening of feed.screenings) {
-      if (screening.nightOf < start || screening.nightOf > end) continue;
-
+      if (screening.nightOf < start) continue;
       const film = films.get(screening.filmKey);
       if (!film) continue;
 
-      const key = `${screening.nightOf}:${venue.id}:${screening.filmKey}`;
-      const existing = listings.get(key);
-      const showtime = {
-        id: screening.id,
-        startsAt: screening.startsAt,
-        label: timeLabel(screening.startsAt),
-        ticketUrl: screening.ticketUrl,
-      };
-
-      if (existing) {
-        existing.showtimes.push(showtime);
-        existing.tags = [...new Set([...existing.tags, ...(screening.tags ?? [])])];
-        if (screening.freshness?.status !== "current") {
-          existing.freshness = screening.freshness ?? existing.freshness;
-        }
-        if (screening.confidence === "disputed") existing.confidence = screening.confidence;
-        if (screening.note) existing.note = screening.note;
-        continue;
+      const identity = movieIdentity(film);
+      let movieEntry = movieMap.get(identity);
+      if (!movieEntry) {
+        movieEntry = {
+          movie: {
+            id: identity,
+            title: film.title,
+            normalizedTitle: normalizeMovieTitle(film.title),
+            directors: film.directors ?? [],
+            year: film.year ?? null,
+            runtimeMin: film.runtimeMin ?? null,
+            rating: film.mpaa ?? null,
+            genres: film.genres ?? [],
+            overview: film.overview ?? null,
+            posterUrl: film.posterUrl ?? null,
+          },
+          runs: new Map(),
+        };
+        movieMap.set(identity, movieEntry);
+      } else {
+        if (!movieEntry.movie.posterUrl && film.posterUrl) movieEntry.movie.posterUrl = film.posterUrl;
+        if (!movieEntry.movie.overview && film.overview) movieEntry.movie.overview = film.overview;
+        if (movieEntry.movie.directors.length === 0 && film.directors) movieEntry.movie.directors = film.directors;
       }
 
-      listings.set(key, {
-        id: key,
-        filmKey: film.key,
-        title: film.title,
-        directors: film.directors ?? [],
-        year: film.year ?? null,
-        runtimeMin: film.runtimeMin ?? null,
-        rating: film.mpaa ?? null,
-        genres: film.genres ?? [],
-        overview: film.overview ?? null,
-        posterUrl: film.posterUrl ?? null,
-        venueId: venue.id,
-        venueName: venue.name,
-        isAmc: venue.isAmc,
-        date: screening.nightOf,
-        showtimes: [showtime],
-        tags: screening.tags ?? [],
-        sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
-        sourceTier: screening.source_tier ?? null,
-        confidence: screening.confidence ?? null,
-        verifiedAt: screening.verified_at ?? null,
-        freshness: screening.freshness ?? null,
-        note: screening.note ?? null,
-      });
+      let runEntry = movieEntry.runs.get(venue.id);
+      if (!runEntry) {
+        runEntry = {
+          run: {
+            venueId: venue.id,
+            venueName: venue.name,
+            sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
+            sourceTier: screening.source_tier ?? null,
+            confidence: screening.confidence ?? null,
+            verifiedAt: screening.verified_at ?? null,
+            freshness: screening.freshness ?? null,
+            note: screening.note ?? null,
+          },
+          dates: new Map(),
+        };
+        movieEntry.runs.set(venue.id, runEntry);
+      }
+
+      const showtimes = runEntry.dates.get(screening.nightOf) ?? [];
+      if (!showtimes.some((showtime) => showtime.id === screening.id)) {
+        showtimes.push({
+          id: screening.id,
+          startsAt: screening.startsAt,
+          label: timeLabel(screening.startsAt),
+          ticketUrl: screening.ticketUrl,
+        });
+      }
+      runEntry.dates.set(screening.nightOf, showtimes);
+
+      if (screening.freshness?.status !== "current") runEntry.run.freshness = screening.freshness ?? null;
+      if (screening.confidence === "disputed") runEntry.run.confidence = screening.confidence;
+      if (screening.note) runEntry.run.note = screening.note;
+      if (screening.verified_at && (!runEntry.run.verifiedAt || screening.verified_at > runEntry.run.verifiedAt)) {
+        runEntry.run.verifiedAt = screening.verified_at;
+      }
     }
   }
 
-  const sortedListings = [...listings.values()]
-    .map((listing) => ({
-      ...listing,
-      showtimes: listing.showtimes.sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
-    }))
-    .sort((a, b) => {
-      const firstTime = a.showtimes[0]?.startsAt ?? "";
-      const secondTime = b.showtimes[0]?.startsAt ?? "";
-      return firstTime.localeCompare(secondTime) || a.title.localeCompare(b.title);
-    });
+  const movies = [...movieMap.values()].map(({ movie, runs }) => ({
+    ...movie,
+    runs: [...runs.values()].map(({ run, dates }) => {
+      const sortedDates = [...dates.entries()]
+        .sort(([first], [second]) => first.localeCompare(second))
+        .map(([date, showtimes]) => ({
+          date,
+          showtimes: showtimes.sort((first, second) => first.startsAt.localeCompare(second.startsAt)),
+        }));
+      const startDate = sortedDates[0].date;
+      const endDate = sortedDates.at(-1)?.date ?? startDate;
+      return {
+        ...run,
+        startDate,
+        endDate,
+        durationDays: calendarDays(startDate, endDate),
+        endsAtPublishedHorizon: horizonByVenue.get(run.venueId) === endDate,
+        dates: sortedDates,
+      };
+    }).sort((first, second) => first.startDate.localeCompare(second.startDate) || first.venueName.localeCompare(second.venueName)),
+  })).sort((first, second) => {
+    const firstDate = first.runs[0]?.startDate ?? "";
+    const secondDate = second.runs[0]?.startDate ?? "";
+    return firstDate.localeCompare(secondDate) || first.title.localeCompare(second.title);
+  });
 
-  const dataAsOf = feeds
-    .map(({ feed }) => feed.data_as_of)
-    .filter(Boolean)
-    .sort()
-    .at(-1) ?? null;
+  const end = statuses.map((status) => status.latestListingDate).filter((date): date is string => Boolean(date)).sort().at(-1) ?? start;
+  const dataAsOf = feeds.map(({ feed }) => feed.data_as_of).filter(Boolean).sort().at(-1) ?? null;
 
   return {
-    attribution,
+    attribution: "Showtimes via SceneF.com",
     dataAsOf,
-    range: { start, end, days },
+    range: { start, end, days: calendarDays(start, end) },
     venues: [...VENUES],
-    listings: sortedListings,
-    sources,
+    movies,
+    sources: statuses,
+    amcFilter: {
+      enabled: false,
+      excludedMovieCount: 0,
+      excludedTitles: [],
+      sourceUrls: [],
+    },
   };
 }
 
-export async function fetchSceneFListings(): Promise<ListingsPayload> {
-  const settled = await Promise.allSettled(
-    VENUES.map(async (venue) => {
-      const apiUrl = `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`;
-      const response = await fetch(apiUrl, {
-        headers: { Accept: "application/json" },
-        next: { revalidate: 1800 },
-      });
-
-      if (!response.ok) {
-        throw new Error(`SceneF ${venue.id} returned HTTP ${response.status}`);
-      }
-
-      return { venue, feed: (await response.json()) as SceneFFeed };
-    }),
-  );
-
-  const feeds = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  if (feeds.length === 0) {
-    throw new Error("Every SceneF venue request failed.");
+export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: FeedWithVenue[]): MoviesPayload {
+  const amcTitles = new Set<string>();
+  for (const { feed } of amcFeeds) {
+    const films = new Map(feed.films.map((film) => [film.key, film]));
+    for (const screening of feed.screenings) {
+      if (screening.nightOf < payload.range.start) continue;
+      const title = films.get(screening.filmKey)?.title;
+      if (!title) continue;
+      for (const key of titleMatchKeys(title)) amcTitles.add(key);
+    }
   }
+
+  const excluded: string[] = [];
+  const movies = payload.movies.filter((movie) => {
+    const matches = [...titleMatchKeys(movie.title)].some((key) => amcTitles.has(key));
+    if (matches) excluded.push(movie.title);
+    return !matches;
+  });
+
+  return {
+    ...payload,
+    movies,
+    sources: [...payload.sources, ...sourceStatus(amcFeeds)].sort((first, second) => first.venueName.localeCompare(second.venueName)),
+    amcFilter: {
+      enabled: true,
+      excludedMovieCount: excluded.length,
+      excludedTitles: [...new Set(excluded)].sort(),
+      sourceUrls: AMC_VENUES.map((venue) => `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`),
+    },
+  };
+}
+
+async function fetchVenue(venue: VenueConfig): Promise<FeedWithVenue> {
+  const apiUrl = `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`;
+  const response = await fetch(apiUrl, {
+    headers: { Accept: "application/json" },
+    next: {
+      revalidate: 43_200,
+      tags: [SCENEF_CACHE_TAG, `scenef-venue-${venue.id}`],
+    },
+  });
+
+  if (!response.ok) throw new Error(`SceneF ${venue.id} returned HTTP ${response.status}`);
+  return { venue, feed: (await response.json()) as SceneFFeed };
+}
+
+export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<MoviesPayload> {
+  const settled = await Promise.allSettled(VENUES.map(fetchVenue));
+  const feeds = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  if (feeds.length === 0) throw new Error("Every SceneF theater request failed.");
 
   const payload = normalizeFeeds(feeds);
   const failedSources = settled.flatMap((result, index) => {
@@ -274,16 +391,24 @@ export async function fetchSceneFListings(): Promise<ListingsPayload> {
       venueName: venue.name,
       sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
       latestListingDate: null,
-      reachesWindowEnd: false,
       error: result.reason instanceof Error ? result.reason.message : "SceneF request failed",
     }];
   });
 
-  return {
+  const completePayload = {
     ...payload,
-    sources: [
-      ...payload.sources,
-      ...failedSources,
-    ].sort((a, b) => a.venueName.localeCompare(b.venueName)),
+    sources: [...payload.sources, ...failedSources].sort((first, second) => first.venueName.localeCompare(second.venueName)),
   };
+
+  if (!excludeAmc) return completePayload;
+
+  const amcSettled = await Promise.allSettled(AMC_VENUES.map(fetchVenue));
+  const amcFailure = amcSettled.find((result) => result.status === "rejected");
+  if (amcFailure?.status === "rejected") {
+    const reason = amcFailure.reason instanceof Error ? amcFailure.reason.message : "unknown error";
+    throw new Error(`AMC title filtering is unavailable because a SceneF AMC source failed: ${reason}`);
+  }
+
+  const amcFeeds = amcSettled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  return excludeMoviesPlayingAtAmc(completePayload, amcFeeds);
 }

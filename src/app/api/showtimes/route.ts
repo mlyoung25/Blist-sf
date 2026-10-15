@@ -1,11 +1,12 @@
-import { fetchSceneFListings } from "@/lib/scenef";
+import { fetchSceneFMovies } from "@/lib/scenef";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const payload = await fetchSceneFListings();
+    const excludeAmc = new URL(request.url).searchParams.get("excludeAmc") === "1";
+    const payload = await fetchSceneFMovies({ excludeAmc });
     return Response.json(payload, {
       headers: {
-        "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600",
+        "Cache-Control": "no-store",
       },
     });
   } catch (error) {

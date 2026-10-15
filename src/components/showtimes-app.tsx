@@ -2,34 +2,43 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Heart, Search } from "lucide-react";
-import type { Listing, ListingsPayload } from "@/lib/scenef";
+import { ExternalLink, Heart, Search, X } from "lucide-react";
+import type { Movie, MoviesPayload, TheaterRun } from "@/lib/scenef";
 
 const ALL_VENUES = "all";
-const SAVED_KEY = "blist-saved-screenings";
+const SAVED_KEY = "blist-saved-movies";
 
-function formatDate(date: string, long = false) {
+function formatDate(date: string, includeYear = false) {
   return new Intl.DateTimeFormat("en-US", {
-    weekday: long ? "long" : "short",
+    weekday: "short",
     month: "short",
     day: "numeric",
+    year: includeYear ? "numeric" : undefined,
     timeZone: "UTC",
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
-function movieDetails(listing: Listing) {
+function movieDetails(movie: Movie) {
   return [
-    listing.directors.join(", "),
-    listing.year,
-    listing.runtimeMin ? `${listing.runtimeMin} min` : null,
-    listing.rating,
+    movie.directors.join(", "),
+    movie.year,
+    movie.runtimeMin ? `${movie.runtimeMin} min` : null,
+    movie.rating,
   ].filter(Boolean).join(" · ");
 }
 
-function needsConfirmation(listing: Listing) {
-  const freshness = listing.freshness;
-  return listing.confidence === "disputed"
-    || (freshness !== null && freshness !== undefined && (
+function runSummary(run: TheaterRun) {
+  const dates = run.startDate === run.endDate
+    ? formatDate(run.startDate)
+    : `${formatDate(run.startDate)}–${formatDate(run.endDate)}`;
+  const duration = `${run.durationDays} ${run.durationDays === 1 ? "day" : "days"}`;
+  return `${run.venueName}: ${dates} · ${duration}${run.endsAtPublishedHorizon ? "…" : ""}`;
+}
+
+function needsConfirmation(run: TheaterRun) {
+  const freshness = run.freshness;
+  return run.confidence === "disputed"
+    || (freshness !== null && (
       freshness.status !== "current"
       || freshness.retained === true
       || (freshness.source_status !== undefined && freshness.source_status !== "ok")
@@ -37,74 +46,63 @@ function needsConfirmation(listing: Listing) {
 }
 
 export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolean }) {
-  const [payload, setPayload] = useState<ListingsPayload | null>(null);
+  const [payload, setPayload] = useState<MoviesPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState("");
+  const [loading, setLoading] = useState(true);
   const [selectedVenue, setSelectedVenue] = useState(ALL_VENUES);
   const [query, setQuery] = useState("");
-  const [includeAmc, setIncludeAmc] = useState(false);
+  const [excludeAmc, setExcludeAmc] = useState(false);
   const [saved, setSaved] = useState<string[]>([]);
+  const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SAVED_KEY);
-    if (stored) {
-      try {
-        const savedIds = JSON.parse(stored) as string[];
-        window.setTimeout(() => setSaved(savedIds), 0);
-      } catch {
-        window.localStorage.removeItem(SAVED_KEY);
-      }
+    if (!stored) return;
+    try {
+      const savedIds = JSON.parse(stored) as string[];
+      window.setTimeout(() => setSaved(savedIds), 0);
+    } catch {
+      window.localStorage.removeItem(SAVED_KEY);
     }
+  }, []);
 
+  useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/showtimes", { signal: controller.signal })
+    fetch(`/api/showtimes${excludeAmc ? "?excludeAmc=1" : ""}`, { signal: controller.signal })
       .then(async (response) => {
-        const data = await response.json() as ListingsPayload | { error?: string };
-        if (!response.ok || !("listings" in data)) {
-          throw new Error("error" in data ? data.error : "Unable to load showtimes.");
+        const data = await response.json() as MoviesPayload | { error?: string };
+        if (!response.ok || !("movies" in data)) {
+          throw new Error("error" in data ? data.error : "Unable to load movies.");
         }
         setPayload(data);
-        setSelectedDate(data.range.start);
       })
       .catch((fetchError: unknown) => {
         if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
-        setError(fetchError instanceof Error ? fetchError.message : "Unable to load showtimes.");
+        setError(fetchError instanceof Error ? fetchError.message : "Unable to load movies.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
       });
-
     return () => controller.abort();
-  }, []);
+  }, [excludeAmc]);
 
-  const dates = useMemo(() => {
-    if (!payload) return [];
-    return Array.from({ length: payload.range.days }, (_, index) => {
-      const date = new Date(`${payload.range.start}T12:00:00Z`);
-      date.setUTCDate(date.getUTCDate() + index);
-      return date.toISOString().slice(0, 10);
-    });
-  }, [payload]);
-
-  const visibleVenues = useMemo(
-    () => payload?.venues.filter((venue) => includeAmc || !venue.isAmc) ?? [],
-    [includeAmc, payload],
-  );
-
-  const visibleListings = useMemo(() => {
+  const visibleMovies = useMemo(() => {
     if (!payload) return [];
     const needle = query.trim().toLowerCase();
-    return payload.listings.filter((listing) => {
-      const matchesSaved = !savedOnly || saved.includes(listing.id);
-      const matchesDate = savedOnly || listing.date === selectedDate;
-      const matchesAmc = includeAmc || !listing.isAmc;
-      const matchesVenue = selectedVenue === ALL_VENUES || listing.venueId === selectedVenue;
+    return payload.movies.filter((movie) => {
+      const matchesSaved = !savedOnly || saved.includes(movie.id);
+      const matchesVenue = selectedVenue === ALL_VENUES || movie.runs.some((run) => run.venueId === selectedVenue);
       const haystack = [
-        listing.title,
-        listing.directors.join(" "),
-        listing.venueName,
-        listing.genres.join(" "),
+        movie.title,
+        movie.directors.join(" "),
+        movie.genres.join(" "),
+        movie.runs.map((run) => run.venueName).join(" "),
       ].join(" ").toLowerCase();
-      return matchesSaved && matchesDate && matchesAmc && matchesVenue && haystack.includes(needle);
+      return matchesSaved && matchesVenue && haystack.includes(needle);
     });
-  }, [includeAmc, payload, query, saved, savedOnly, selectedDate, selectedVenue]);
+  }, [payload, query, saved, savedOnly, selectedVenue]);
+
+  const selectedMovie = payload?.movies.find((movie) => movie.id === selectedMovieId) ?? null;
 
   const toggleSaved = (id: string) => {
     const next = saved.includes(id) ? saved.filter((savedId) => savedId !== id) : [...saved, id];
@@ -117,12 +115,12 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
       <section className="mx-auto max-w-7xl">
         <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
           <label className="relative">
-            <span className="sr-only">Search showtimes</span>
+            <span className="sr-only">Search movies</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search films, directors, theaters"
+              placeholder="Search movies, directors, theaters"
               className="h-10 w-full rounded-md border border-white/10 bg-zinc-900 pl-9 pr-3 text-sm outline-none placeholder:text-zinc-600 focus:border-white/30"
             />
           </label>
@@ -135,50 +133,36 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
               className="h-10 w-full rounded-md border border-white/10 bg-zinc-900 px-3 text-sm outline-none focus:border-white/30 md:w-72"
             >
               <option value={ALL_VENUES}>All theaters</option>
-              {visibleVenues.map((venue) => (
+              {payload?.venues.map((venue) => (
                 <option key={venue.id} value={venue.id}>{venue.name}</option>
               ))}
             </select>
           </label>
 
-          <label className="flex h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
             <input
               type="checkbox"
-              checked={includeAmc}
+              checked={excludeAmc}
               onChange={(event) => {
-                const checked = event.target.checked;
-                setIncludeAmc(checked);
-                if (!checked && selectedVenue.startsWith("amc-")) setSelectedVenue(ALL_VENUES);
+                setLoading(true);
+                setError(null);
+                setPayload(null);
+                setExcludeAmc(event.target.checked);
               }}
               className="accent-white"
             />
-            Include AMC
+            Hide movies at AMC
           </label>
         </div>
 
-        {!savedOnly && (
-          <div className="no-scrollbar flex gap-1 overflow-x-auto border-b border-white/10 py-3" aria-label="Choose a date">
-            {dates.map((date) => (
-              <button
-                key={date}
-                onClick={() => setSelectedDate(date)}
-                className={`shrink-0 rounded-md px-3 py-2 text-left text-xs transition ${
-                  selectedDate === date ? "bg-white text-black" : "text-zinc-400 hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                {formatDate(date)}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="flex min-h-12 items-center justify-between gap-4 py-3 text-xs text-zinc-500">
           <span>
-            {savedOnly ? "Saved screenings" : selectedDate ? formatDate(selectedDate, true) : "Loading dates"}
-            {payload ? ` · ${visibleListings.length} ${visibleListings.length === 1 ? "film" : "films"}` : ""}
+            {savedOnly ? "Saved movies" : "Movies"}
+            {payload ? ` · ${visibleMovies.length}` : ""}
+            {payload?.amcFilter.enabled ? ` · ${payload.amcFilter.excludedMovieCount} AMC ${payload.amcFilter.excludedMovieCount === 1 ? "match" : "matches"} hidden` : ""}
           </span>
           <Link className="hover:text-white" href={savedOnly ? "/" : "/saved"}>
-            {savedOnly ? "All showtimes" : `Saved (${saved.length})`}
+            {savedOnly ? "All movies" : `Saved (${saved.length})`}
           </Link>
         </div>
 
@@ -188,69 +172,58 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
           </div>
         )}
 
-        {!payload && !error && (
-          <div className="py-20 text-center text-sm text-zinc-500">Loading live showtimes from SceneF…</div>
-        )}
-
-        {payload && visibleListings.length === 0 && (
+        {loading && (
           <div className="py-20 text-center text-sm text-zinc-500">
-            {savedOnly ? "No saved screenings match these filters." : "SceneF has no listings matching these filters."}
+            {excludeAmc ? "Checking SceneF’s AMC schedules…" : "Loading live movies from SceneF…"}
           </div>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleListings.map((listing) => (
-            <article key={listing.id} className="overflow-hidden rounded-lg border border-white/10 bg-zinc-900">
-              {listing.posterUrl && (
-                <div
-                  role="img"
-                  aria-label=""
-                  className="aspect-[16/7] bg-zinc-800 bg-cover bg-center"
-                  style={{ backgroundImage: `linear-gradient(to top, rgb(24 24 27), transparent 60%), url("${listing.posterUrl}")` }}
-                />
-              )}
-              <div className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-lg font-semibold leading-tight">{listing.title}</h2>
-                    {movieDetails(listing) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(listing)}</p>}
-                  </div>
-                  <button
-                    onClick={() => toggleSaved(listing.id)}
-                    className="rounded-md p-1.5 text-zinc-500 hover:bg-white/5 hover:text-white"
-                    aria-label={saved.includes(listing.id) ? `Remove ${listing.title} from saved` : `Save ${listing.title}`}
-                  >
-                    <Heart className={`size-4 ${saved.includes(listing.id) ? "fill-white text-white" : ""}`} />
-                  </button>
-                </div>
+        {payload && visibleMovies.length === 0 && (
+          <div className="py-20 text-center text-sm text-zinc-500">
+            {savedOnly ? "No saved movies match these filters." : "SceneF has no movies matching these filters."}
+          </div>
+        )}
 
-                <a
-                  href={listing.sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
+        <div className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+          {visibleMovies.map((movie) => (
+            <article key={movie.id} className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-zinc-900">
+              <button
+                onClick={() => setSelectedMovieId(movie.id)}
+                className="group text-left"
+                aria-label={`Open dates and showtimes for ${movie.title}`}
+              >
+                <div className="aspect-[2/3] bg-black">
+                  {movie.posterUrl ? (
+                    <div
+                      role="img"
+                      aria-label={`${movie.title} poster`}
+                      className="size-full bg-contain bg-center bg-no-repeat transition duration-300 group-hover:scale-[1.015]"
+                      style={{ backgroundImage: `url("${movie.posterUrl}")` }}
+                    />
+                  ) : (
+                    <div className="grid size-full place-items-center px-6 text-center text-sm text-zinc-600">Poster unavailable from SceneF</div>
+                  )}
+                </div>
+                <div className="p-4 pb-2">
+                  <h2 className="text-lg font-semibold leading-tight group-hover:text-white">{movie.title}</h2>
+                  {movieDetails(movie) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(movie)}</p>}
+                </div>
+              </button>
+
+              <div className="flex flex-1 flex-col px-4 pb-4">
+                <button onClick={() => setSelectedMovieId(movie.id)} className="text-left" aria-label={`View full run for ${movie.title}`}>
+                  <ul className="space-y-1.5 text-xs leading-5 text-zinc-400">
+                    {movie.runs.map((run) => <li key={run.venueId}>{runSummary(run)}</li>)}
+                  </ul>
+                </button>
+                <button
+                  onClick={() => toggleSaved(movie.id)}
+                  className="mt-auto flex items-center gap-1.5 pt-4 text-xs text-zinc-500 hover:text-white"
+                  aria-label={saved.includes(movie.id) ? `Remove ${movie.title} from saved` : `Save ${movie.title}`}
                 >
-                  {listing.venueName}<ExternalLink className="size-3" />
-                </a>
-                {needsConfirmation(listing) && (
-                  <p className="mt-2 text-xs text-amber-300">
-                    Confirm with the theater{listing.note ? ` — ${listing.note}` : ""}
-                  </p>
-                )}
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {listing.showtimes.map((showtime) => (
-                    <a
-                      key={showtime.id}
-                      href={showtime.ticketUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-md border border-white/15 px-2.5 py-1.5 text-xs font-medium hover:border-white/40 hover:bg-white hover:text-black"
-                    >
-                      {showtime.label}
-                    </a>
-                  ))}
-                </div>
+                  <Heart className={`size-4 ${saved.includes(movie.id) ? "fill-white text-white" : ""}`} />
+                  {saved.includes(movie.id) ? "Saved" : "Save"}
+                </button>
               </div>
             </article>
           ))}
@@ -259,9 +232,10 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
         {payload && (
           <details className="mt-8 border-t border-white/10 py-4 text-xs text-zinc-600">
             <summary className="cursor-pointer hover:text-zinc-300">
-              {payload.attribution} · {payload.range.days}-day window · data as of{" "}
+              {payload.attribution} · published schedule through {formatDate(payload.range.end, true)} · data as of{" "}
               {payload.dataAsOf ? new Date(payload.dataAsOf).toLocaleString() : "unknown"}
             </summary>
+            <p className="mt-2">An ellipsis after a theater run means the movie reaches that theater&apos;s last currently published SceneF date.</p>
             <ul className="mt-3 space-y-1">
               {payload.sources.map((source) => (
                 <li key={source.venueId}>
@@ -272,7 +246,7 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
                   {source.error
                     ? source.error
                     : source.latestListingDate
-                      ? `SceneF currently lists through ${formatDate(source.latestListingDate, true)}${source.reachesWindowEnd ? "" : " (short of this app’s 14-day window)"}`
+                      ? `SceneF currently lists through ${formatDate(source.latestListingDate, true)}`
                       : "SceneF currently lists no dates"}
                 </li>
               ))}
@@ -280,6 +254,71 @@ export default function ShowtimesApp({ savedOnly = false }: { savedOnly?: boolea
           </details>
         )}
       </section>
+
+      {selectedMovie && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+          onClick={() => setSelectedMovieId(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="movie-dialog-title"
+            className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-t-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl sm:rounded-xl sm:p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="min-w-0 flex-1">
+                <h2 id="movie-dialog-title" className="text-2xl font-semibold">{selectedMovie.title}</h2>
+                {movieDetails(selectedMovie) && <p className="mt-1 text-sm text-zinc-500">{movieDetails(selectedMovie)}</p>}
+              </div>
+              <button className="rounded-md p-2 text-zinc-500 hover:bg-white/5 hover:text-white" onClick={() => setSelectedMovieId(null)} aria-label="Close movie details">
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {selectedMovie.overview && <p className="mt-5 text-sm leading-6 text-zinc-300">{selectedMovie.overview}</p>}
+
+            <div className="mt-6 space-y-6">
+              {selectedMovie.runs.map((run) => (
+                <section key={run.venueId}>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/10 pb-2">
+                    <a className="inline-flex items-center gap-1 font-medium hover:text-white" href={run.sourceUrl} target="_blank" rel="noreferrer">
+                      {run.venueName}<ExternalLink className="size-3.5" />
+                    </a>
+                    <span className="text-xs text-zinc-500">{runSummary(run)}</span>
+                  </div>
+                  {needsConfirmation(run) && (
+                    <p className="mt-2 text-xs text-amber-300">
+                      Confirm with the theater{run.note ? ` — ${run.note}` : ""}
+                    </p>
+                  )}
+                  <div className="mt-3 space-y-3">
+                    {run.dates.map((date) => (
+                      <div key={date.date} className="grid gap-2 sm:grid-cols-[8rem_1fr] sm:items-start">
+                        <span className="text-sm text-zinc-400">{formatDate(date.date, true)}</span>
+                        <div className="flex flex-wrap gap-2">
+                          {date.showtimes.map((showtime) => (
+                            <a
+                              key={showtime.id}
+                              href={showtime.ticketUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-white/15 px-2.5 py-1.5 text-xs font-medium hover:border-white/40 hover:bg-white hover:text-black"
+                            >
+                              {showtime.label}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
