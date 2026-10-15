@@ -339,6 +339,10 @@ try {
   const dialog = page.getByRole("dialog");
   const titleLink = dialog.getByRole("link", { name: `${multi.title} on Letterboxd (opens in a new tab)` }).first();
   assert.equal(await titleLink.getAttribute("href"), `https://letterboxd.com/tmdb/${multi.tmdbId}/`);
+  await dialog.getByText(
+    `Language: ${multi.languages.length > 0 ? multi.languages.join(", ") : "Unknown"}`,
+    { exact: true },
+  ).waitFor();
   const directorLink = dialog.getByRole("link", { name: `${multi.directors[0]} on Letterboxd (opens in a new tab)` });
   assert.ok((await directorLink.getAttribute("href")).startsWith("https://letterboxd.com/search/"));
   for (const run of multi.runs) {
