@@ -15,9 +15,11 @@ cannot be checked. Pins and manual hides persist in local storage; pins only reo
 the main movie grid and do not create a separate saved page.
 
 The UI supports simultaneous theater selections and one-day/multi-day filtering.
-One-day cards use a thicker blue outer border; verified On Film cards use a gold inset
-ring. Cards in both states show concentric blue-outside/gold-inside borders without
-visible status badges. Screen-reader-only status text and the labeled filters preserve
+One-day cards use a thicker blue outer border; verified On Film cards use a complete
+gold inner border inside a fixed gap. Cards in both states show two unclipped,
+concentric blue-outside/gold-inside rectangles without visible status badges.
+Every card reserves the same border and gap space, so state changes do not alter card
+or poster dimensions. Screen-reader-only status text and the labeled filters preserve
 the same meaning nonvisually. Month dividers use each movie's earliest run start, so a
 run that crosses into a later month stays before that month's divider.
 

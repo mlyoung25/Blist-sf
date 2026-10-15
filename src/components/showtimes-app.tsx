@@ -188,10 +188,16 @@ export default function ShowtimesApp() {
         data-movie-id={movie.id}
         data-run-type={oneDay ? "one-day" : "multi-day"}
         data-on-film={movie.onFilm.matched ? "true" : "false"}
-        className={`flex min-w-0 flex-col overflow-hidden rounded-lg border-2 bg-zinc-900 ${
+        className={`min-w-0 rounded-xl border-2 bg-zinc-950 p-[3px] ${
           oneDay ? "border-blue-500/90" : "border-white/10"
-        } ${movie.onFilm.matched ? "ring-2 ring-inset ring-yellow-400/90" : ""}`}
+        }`}
       >
+        <div
+          data-card-frame
+          className={`flex h-full min-w-0 flex-col overflow-hidden rounded-lg border-2 bg-zinc-900 ${
+            movie.onFilm.matched ? "border-yellow-400/90" : "border-transparent"
+          }`}
+        >
         {(oneDay || movie.onFilm.matched) && (
           <span className="sr-only">
             Card status: {oneDay ? "one-day event" : ""}{oneDay && movie.onFilm.matched ? "; " : ""}
@@ -274,6 +280,7 @@ export default function ShowtimesApp() {
               {isHidden ? "Unhide" : "Hide"}
             </button>
           </div>
+        </div>
         </div>
       </article>
     );

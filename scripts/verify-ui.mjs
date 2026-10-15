@@ -79,6 +79,40 @@ function formatDate(date, includeYear = false) {
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
+async function ringGeometry(card) {
+  return card.evaluate((article) => {
+    const frame = article.querySelector("[data-card-frame]");
+    if (!(frame instanceof HTMLElement)) throw new Error("Card frame is missing.");
+    const outer = getComputedStyle(article);
+    const inner = getComputedStyle(frame);
+    const outerBox = article.getBoundingClientRect();
+    const innerBox = frame.getBoundingClientRect();
+    return {
+      outerWidths: [outer.borderTopWidth, outer.borderRightWidth, outer.borderBottomWidth, outer.borderLeftWidth],
+      outerColors: [outer.borderTopColor, outer.borderRightColor, outer.borderBottomColor, outer.borderLeftColor],
+      padding: [outer.paddingTop, outer.paddingRight, outer.paddingBottom, outer.paddingLeft],
+      innerWidths: [inner.borderTopWidth, inner.borderRightWidth, inner.borderBottomWidth, inner.borderLeftWidth],
+      innerColors: [inner.borderTopColor, inner.borderRightColor, inner.borderBottomColor, inner.borderLeftColor],
+      offsets: [
+        innerBox.top - outerBox.top,
+        outerBox.right - innerBox.right,
+        outerBox.bottom - innerBox.bottom,
+        innerBox.left - outerBox.left,
+      ],
+    };
+  });
+}
+
+function assertCompleteDualRings(geometry) {
+  assert.deepEqual(geometry.outerWidths, ["2px", "2px", "2px", "2px"]);
+  assert.deepEqual(geometry.innerWidths, ["2px", "2px", "2px", "2px"]);
+  assert.equal(new Set(geometry.outerColors).size, 1);
+  assert.equal(new Set(geometry.innerColors).size, 1);
+  assert.notEqual(geometry.outerColors[0], geometry.innerColors[0]);
+  assert.deepEqual(geometry.padding, ["3px", "3px", "3px", "3px"]);
+  assert.equal(geometry.offsets.every((offset) => Math.abs(offset - 5) < 0.1), true);
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -151,16 +185,19 @@ try {
   }
 
   const cardFor = (movie) => page.locator(`article[data-movie-id=${JSON.stringify(movie.id)}]`);
+  const frameFor = (movie) => cardFor(movie).locator("[data-card-frame]");
   const oneDayOnlyClass = await cardFor(oneDayOnlyMovie).getAttribute("class");
   const dualBorderClass = await cardFor(dualBorderMovie).getAttribute("class");
+  const dualFrameClass = await frameFor(dualBorderMovie).getAttribute("class");
   const neutralClass = await cardFor(neutralMovie).getAttribute("class");
+  const neutralFrameClass = await frameFor(neutralMovie).getAttribute("class");
   assert.match(oneDayOnlyClass, /border-2/);
   assert.match(oneDayOnlyClass, /border-blue-500\/90/);
-  assert.doesNotMatch(oneDayOnlyClass, /ring-yellow-400/);
   assert.match(dualBorderClass, /border-blue-500\/90/);
-  assert.match(dualBorderClass, /ring-inset/);
-  assert.match(dualBorderClass, /ring-yellow-400\/90/);
-  assert.doesNotMatch(neutralClass, /border-blue-500|ring-yellow-400/);
+  assert.match(dualFrameClass, /border-yellow-400\/90/);
+  assert.doesNotMatch(neutralClass, /border-blue-500/);
+  assert.match(neutralFrameClass, /border-transparent/);
+  assertCompleteDualRings(await ringGeometry(cardFor(dualBorderMovie)));
   assert.equal(await cardFor(oneDayOnlyMovie).getByText("One-day event", { exact: true }).count(), 0);
   assert.equal(await cardFor(dualBorderMovie).getByText("On Film", { exact: true }).count(), 0);
   assert.equal(await cardFor(dualBorderMovie).locator(".sr-only").filter({ hasText: "one-day event" }).count(), 1);
@@ -181,8 +218,8 @@ try {
   await page.getByLabel("Show all hidden").check();
   await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).waitFor();
   const onFilmOnlyClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).getAttribute("class");
-  assert.match(onFilmOnlyClass, /ring-inset/);
-  assert.match(onFilmOnlyClass, /ring-yellow-400\/90/);
+  const onFilmOnlyFrameClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}] [data-card-frame]`).getAttribute("class");
+  assert.match(onFilmOnlyFrameClass, /border-yellow-400\/90/);
   assert.doesNotMatch(onFilmOnlyClass, /border-blue-500/);
   await page.getByLabel("Show all hidden").uncheck();
   await page.locator("article").first().waitFor();
@@ -217,8 +254,8 @@ try {
   assert.equal(await page.locator("article").count(), onFilmMovies.length);
   assert.equal(await page.locator("article[data-on-film='true']").count(), onFilmMovies.length);
   assert.equal(
-    await page.locator("article[data-on-film='true']").evaluateAll((cards) => (
-      cards.every((card) => card.className.includes("ring-inset") && card.className.includes("ring-yellow-400/90"))
+    await page.locator("article[data-on-film='true'] [data-card-frame]").evaluateAll((frames) => (
+      frames.every((frame) => frame.className.includes("border-yellow-400/90"))
     )),
     true,
   );
@@ -343,6 +380,9 @@ try {
   assert.ok(wideGridColumns > desktopGridColumns);
   assert.ok(wideCardBox.width < desktopCardBox.width);
   assert.ok((await wide.locator("section").first().boundingBox()).width > 2200);
+  assertCompleteDualRings(await ringGeometry(
+    wide.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
+  ));
 
   const mobile = await context.newPage();
   mobile.on("console", (message) => {
@@ -351,6 +391,9 @@ try {
   mobile.on("pageerror", (error) => pageErrors.push(error.message));
   await mobile.setViewportSize({ width: 390, height: 844 });
   await mobile.goto(baseUrl, { waitUntil: "networkidle" });
+  assertCompleteDualRings(await ringGeometry(
+    mobile.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
+  ));
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   assert.equal(
     await mobile.getByRole("navigation", { name: "Filter showtimes by date" })
@@ -374,6 +417,9 @@ try {
     oneDayCount,
     multiDayCount,
     borderStatesAndDimensionsVerified: true,
+    completeDualRingsVerifiedAtWidths: [390, 1280, 2400],
+    outerAndInnerBorderWidths: "2px each side",
+    interRingGap: "3px each side",
     theaterMultiselectUnionCount: unionCount,
     monthDividersValidated: true,
     dateBubbleCount: availableDates.length + 1,
