@@ -29,8 +29,16 @@ in HD*, and *Exhibition on Screen* are excluded.
 
 IMDb scores come directly from SceneF's full film metadata. SceneF currently publishes
 IMDb, TMDB, Rotten Tomatoes, and Metacritic fields, but no Letterboxd rating field; the
-UI therefore shows `Letterboxd unavailable` instead of deriving or scraping a score.
-SceneF TMDB and IMDb IDs drive direct IMDb, Letterboxd `/tmdb/{id}/`, and TMDB
+UI therefore shows `Letterboxd unavailable` instead of guessing or scraping a score.
+Letterboxd film pages expose a weighted aggregate in JSON-LD and `twitter:data2`
+metadata (verified through a TMDB redirect on October 15, 2026), but Letterboxd's
+[Terms of Use](https://letterboxd.com/legal/terms-of-use/) prohibit automated
+data-gathering tools unless explicitly authorized. The supported
+[Letterboxd API](https://api-docs.letterboxd.com/) exposes weighted film ratings and
+accepts TMDB IDs, but requires OAuth client credentials; none are configured for this
+deployment, and an unauthenticated request returns HTTP 401. For that reason the app
+does not crawl film or search pages, including for title fallbacks. SceneF TMDB and
+IMDb IDs still drive direct IMDb, Letterboxd `/tmdb/{id}/`, and TMDB
 `/movie/{id}-{slug}/` links. Movies without an ID use an encoded search URL.
 
 Unpinned cards sort deterministically in three categories: one-day runs showing today,
