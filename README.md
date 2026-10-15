@@ -21,8 +21,9 @@ month's divider.
 
 The importer rejects explicit non-film category labels and descriptions (live music,
 music, comedy, concert-like events) plus secret-movie listings. Film metadata and
-context prevent legitimate titles such as *They Live*, *Music*, and *National Theatre
-Live: Frankenstein* from being removed.
+context prevent legitimate titles such as *They Live* and *Music* from being removed,
+while explicit event-series prefixes such as *National Theatre Live*, *MET Opera Live
+in HD*, and *Exhibition on Screen* are excluded.
 
 ## Data refresh schedule
 

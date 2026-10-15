@@ -159,19 +159,21 @@ test("non-film event labels and secret movies are excluded", () => {
     { key: "event-3", title: "Comedy At The Balboa: Tokyo Kanpai Boys" },
     { key: "event-4", title: "$5 Secret Movie 10/19/26", overview: "Be the first to see it." },
     { key: "event-5", title: "Guest Night", overview: "Live performance. Doors at 7." },
+    { key: "event-6", title: "National Theatre Live: Frankenstein", year: 2011, runtimeMin: 130 },
+    { key: "event-7", title: "MET Opera Live in HD: Carmen", runtimeMin: 195 },
+    { key: "event-8", title: "Exhibition on Screen: Van Gogh", runtimeMin: 90 },
   ];
-  assert.deepEqual(events.map((film) => isLikelyFilm(film)), [false, false, false, false, false]);
+  assert.deepEqual(events.map((film) => isLikelyFilm(film)), [false, false, false, false, false, false, false, false]);
 });
 
 test("event filtering does not over-filter legitimate film titles", () => {
   const films: SceneFFilm[] = [
     { key: "film-1", title: "Music", year: 2021, runtimeMin: 107, directors: ["Sia"] },
     { key: "film-2", title: "They Live", year: 1988, runtimeMin: 93, directors: ["John Carpenter"] },
-    { key: "film-3", title: "National Theatre Live: Frankenstein", year: 2011, runtimeMin: 130 },
-    { key: "film-4", title: "The 9 Lives of Barbara Dane", year: 2023, runtimeMin: 107 },
-    { key: "film-5", title: "Balboa Halloween Mystery Marathon", overview: "Four mystery horror classics. Doors at 4:15 PM." },
+    { key: "film-3", title: "The 9 Lives of Barbara Dane", year: 2023, runtimeMin: 107 },
+    { key: "film-4", title: "Balboa Halloween Mystery Marathon", overview: "Four mystery horror classics. Doors at 4:15 PM." },
   ];
-  assert.deepEqual(films.map((film) => isLikelyFilm(film)), [true, true, true, true, true]);
+  assert.deepEqual(films.map((film) => isLikelyFilm(film)), [true, true, true, true]);
 });
 
 test("normalization reports excluded non-film entries without creating cards", () => {

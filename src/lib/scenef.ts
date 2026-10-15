@@ -204,6 +204,9 @@ export function isLikelyFilm(film: SceneFFilm, tags: string[] = []) {
     return false;
   }
 
+  const eventSeriesPrefix = /^(?:national theatre live|nt live|met(?:ropolitan)? opera(?: live(?: in hd)?)?|royal opera house|the royal ballet|bolshoi ballet|exhibition on screen|great art on screen)\b/;
+  if (eventSeriesPrefix.test(title)) return false;
+
   const categoryLabelRaw = /^(?:live music|live|music|comedy|stand[- ]?up|concert|performance|talk|lecture|panel)\s*(?::|[|—-]|\s+at\b)/i;
   const categoryLabel = /^(?:live music|live|music|comedy|stand up|standup|concert|performance|talk|lecture|panel)\s+(?:at|with)\b/;
   const explicitLiveEvent = /\blive music\b|\bwith live (?:music|score)\b|\blive original score\b/;
