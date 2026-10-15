@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExternalLink, EyeOff, Pin, Search, X } from "lucide-react";
-import { movieSortCategory, sortMovies } from "@/lib/movie-sort";
+import { movieSortCategory, movieStartDate, movieStartMonth, sortMovies } from "@/lib/movie-sort";
 import {
   imdbMovieUrl,
   letterboxdDirectorUrl,
@@ -51,10 +51,6 @@ function runSummary(run: TheaterRun) {
     : `${formatDate(run.startDate)}–${formatDate(run.endDate)}`;
   const duration = `${run.durationDays} ${run.durationDays === 1 ? "day" : "days"}`;
   return `${run.venueName}: ${dates} · ${duration}${run.endsAtPublishedHorizon ? "…" : ""}`;
-}
-
-function movieStartDate(movie: Movie) {
-  return movie.runs.map((run) => run.startDate).sort()[0];
 }
 
 function isOneDayMovie(movie: Movie) {
@@ -393,8 +389,8 @@ export default function ShowtimesApp() {
           )}
           {pinnedMovies.map(renderCard)}
           {unpinnedMovies.map((movie, index) => {
-            const month = movieStartDate(movie).slice(0, 7);
-            const previousMonth = index > 0 ? movieStartDate(unpinnedMovies[index - 1]).slice(0, 7) : null;
+            const month = movieStartMonth(movie);
+            const previousMonth = index > 0 ? movieStartMonth(unpinnedMovies[index - 1]) : null;
             return (
               <Fragment key={movie.id}>
                 {month !== previousMonth && (

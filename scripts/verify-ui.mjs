@@ -100,12 +100,22 @@ try {
     category: article.dataset.sortCategory,
   })));
   const categoryRanks = { "one-day-today": 0, "multi-day": 1, "remaining": 2 };
-  assert.equal(orderedIds.every((item, index) => (
-    index === 0 || categoryRanks[orderedIds[index - 1].category] <= categoryRanks[item.category]
-  )), true);
   const movieById = new Map(defaultPayload.movies.map((movie) => [movie.id, movie]));
+  const startMonth = (id) => movieById.get(id).runs.map((run) => run.startDate).sort()[0].slice(0, 7);
+  assert.equal(orderedIds.every((item, index) => (
+    index === 0 || startMonth(orderedIds[index - 1].id) <= startMonth(item.id)
+  )), true);
+  assert.equal(orderedIds.every((item, index) => (
+    index === 0
+    || startMonth(orderedIds[index - 1].id) !== startMonth(item.id)
+    || categoryRanks[orderedIds[index - 1].category] <= categoryRanks[item.category]
+  )), true);
   assert.equal(orderedIds.every((item, index) => {
-    if (index === 0 || orderedIds[index - 1].category !== item.category) return true;
+    if (
+      index === 0
+      || startMonth(orderedIds[index - 1].id) !== startMonth(item.id)
+      || orderedIds[index - 1].category !== item.category
+    ) return true;
     const previous = ratingScore(movieById.get(orderedIds[index - 1].id));
     const current = ratingScore(movieById.get(item.id));
     return previous === null || current === null || previous >= current;
@@ -179,6 +189,7 @@ try {
   const pinCard = page.locator(`article[data-movie-id=${JSON.stringify(pinTarget.id)}]`);
   await pinCard.getByRole("button", { name: `Pin ${pinTarget.title}` }).click();
   assert.equal(await page.locator("article").first().getAttribute("data-movie-id"), pinTarget.id);
+  assert.equal(await page.locator("[data-divider]").first().getAttribute("data-divider"), "pinned");
   await page.reload({ waitUntil: "networkidle" });
   assert.equal(await page.locator("article").first().getAttribute("data-movie-id"), pinTarget.id);
   assert.equal(await page.locator("[data-divider='pinned']").count(), 1);

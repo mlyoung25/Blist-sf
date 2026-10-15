@@ -41,11 +41,13 @@ does not crawl film or search pages, including for title fallbacks. SceneF TMDB 
 IMDb IDs still drive direct IMDb, Letterboxd `/tmdb/{id}/`, and TMDB
 `/movie/{id}-{slug}/` links. Movies without an ID use an encoded search URL.
 
-Unpinned cards sort deterministically in three categories: one-day runs showing today,
-multi-day runs, then remaining one-day runs on other dates. Within a category, the
-available IMDb/Letterboxd score sorts descending. Exact rating ties use, in order:
-number of theaters, number of showtimes, longest run, earliest run date, title, then
-stable movie ID. Pinned cards remain above this computed order.
+Pinned cards remain in a global section above the computed list. Unpinned cards group
+chronologically by the month of their earliest theater-run start date; a run crossing
+into another month remains in its start month. Within each month, cards use three
+deterministic categories: one-day runs showing today, multi-day runs, then remaining
+one-day runs on other dates. Within a category, the available IMDb/Letterboxd score
+sorts descending. Exact rating ties use, in order: number of theaters, number of
+showtimes, longest run, earliest run date, title, then stable movie ID.
 
 The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
 browser extensions can inject attributes there before hydration. No app subtree uses

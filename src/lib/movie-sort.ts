@@ -31,8 +31,12 @@ export function movieProminence(movie: Movie) {
   };
 }
 
-function earliestRunDate(movie: Movie) {
+export function movieStartDate(movie: Movie) {
   return movie.runs.map((run) => run.startDate).sort()[0] ?? "";
+}
+
+export function movieStartMonth(movie: Movie) {
+  return movieStartDate(movie).slice(0, 7);
 }
 
 export function compareMovies(first: Movie, second: Movie, today: string) {
@@ -58,15 +62,20 @@ export function compareMovies(first: Movie, second: Movie, today: string) {
   return secondProminence.theaterCount - firstProminence.theaterCount
     || secondProminence.showtimeCount - firstProminence.showtimeCount
     || secondProminence.longestRunDays - firstProminence.longestRunDays
-    || earliestRunDate(first).localeCompare(earliestRunDate(second))
+    || movieStartDate(first).localeCompare(movieStartDate(second))
     || first.title.localeCompare(second.title)
     || first.id.localeCompare(second.id);
 }
 
 export function sortMovies(movies: Movie[], today: string, pinnedIds: string[] = []) {
   const pinned = new Set(pinnedIds);
-  return [...movies].sort((first, second) => (
-    Number(pinned.has(second.id)) - Number(pinned.has(first.id))
-    || compareMovies(first, second, today)
-  ));
+  return [...movies].sort((first, second) => {
+    const firstPinned = pinned.has(first.id);
+    const secondPinned = pinned.has(second.id);
+    const pinnedDifference = Number(secondPinned) - Number(firstPinned);
+    if (pinnedDifference !== 0) return pinnedDifference;
+    if (firstPinned && secondPinned) return compareMovies(first, second, today);
+    return movieStartMonth(first).localeCompare(movieStartMonth(second))
+      || compareMovies(first, second, today);
+  });
 }

@@ -5,6 +5,7 @@ import {
   movieProminence,
   movieRatingScore,
   movieSortCategory,
+  movieStartMonth,
   sortMovies,
 } from "./movie-sort.ts";
 import type { Movie, TheaterRun } from "./scenef.ts";
@@ -123,4 +124,68 @@ test("pins remain above the computed order", () => {
     })],
   });
   assert.deepEqual(sortMovies([today, future], "2026-10-15", ["Future"]).map((item) => item.id), ["Future", "Today"]);
+});
+
+test("global pins precede month-grouped movies with priorities confined to each month", () => {
+  const octoberMulti = movie("October multi", {
+    ratings: { imdb: 5, letterboxd: null },
+    runs: [run({
+      startDate: "2026-10-20",
+      endDate: "2026-11-03",
+      durationDays: 15,
+      dates: [{ date: "2026-10-20", showtimes: [] }],
+    })],
+  });
+  const octoberRated = movie("October rated", {
+    ratings: { imdb: 9, letterboxd: null },
+    runs: [run({
+      startDate: "2026-10-18",
+      endDate: "2026-10-18",
+      dates: [{ date: "2026-10-18", showtimes: [] }],
+    })],
+  });
+  const novemberPinned = movie("November pinned", {
+    ratings: { imdb: 1, letterboxd: null },
+    runs: [run({
+      startDate: "2026-11-20",
+      endDate: "2026-11-20",
+      dates: [{ date: "2026-11-20", showtimes: [] }],
+    })],
+  });
+  const novemberRated = movie("November rated", {
+    ratings: { imdb: 10, letterboxd: null },
+    runs: [run({
+      startDate: "2026-11-02",
+      endDate: "2026-11-05",
+      durationDays: 4,
+      dates: [{ date: "2026-11-02", showtimes: [] }],
+    })],
+  });
+  const decemberPinned = movie("December pinned", {
+    runs: [run({
+      startDate: "2026-12-01",
+      endDate: "2026-12-01",
+      dates: [{ date: "2026-12-01", showtimes: [] }],
+    })],
+  });
+
+  const sorted = sortMovies(
+    [decemberPinned, novemberRated, octoberRated, novemberPinned, octoberMulti],
+    "2026-10-15",
+    ["November pinned", "December pinned"],
+  );
+
+  assert.deepEqual(sorted.map((item) => item.id), [
+    "December pinned",
+    "November pinned",
+    "October multi",
+    "October rated",
+    "November rated",
+  ]);
+  assert.deepEqual(sorted.slice(2).map(movieStartMonth), [
+    "2026-10",
+    "2026-10",
+    "2026-11",
+  ]);
+  assert.equal(movieStartMonth(octoberMulti), "2026-10");
 });
