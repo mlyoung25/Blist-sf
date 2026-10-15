@@ -24,10 +24,10 @@ the same meaning nonvisually. Month dividers use each movie's earliest run start
 run that crosses into a later month stays before that month's divider.
 
 At normal desktop widths the content occupies 70% of the viewport with four cards per
-row and 15% margins on each side. That layout remains through a 1800px effective
-viewport (approximately 80% zoom from a 1440px baseline). Above 1800px the content
-expands to 88% and an auto-fill grid adds smaller cards and columns. Mobile remains a
-single full-width card below 460px.
+row and 15% margins on each side. That layout remains through a 1800px CSS viewport
+(approximately 80% browser zoom from a 1440px baseline). Wider viewports keep the same
+70% width and 15% margins while stepping the grid to five columns at 1920px and six at
+2400px. Mobile remains a single full-width card below 460px.
 
 The importer rejects explicit non-film category labels and descriptions (live music,
 music, comedy, concert-like events) plus secret-movie listings. Film metadata and

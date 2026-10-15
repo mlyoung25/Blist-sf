@@ -504,17 +504,15 @@ try {
 
   const seventyFivePercent = await openZoomStep(0.75);
   const seventyFiveLayout = seventyFivePercent.metrics;
-  assert.ok(seventyFiveLayout.columns > eightyLayout.columns);
-  assert.ok(seventyFiveLayout.cardWidth < desktopLayout.cardWidth);
-  assert.ok(Math.abs(seventyFiveLayout.leftMarginRatio - 0.06) < 0.005);
-  assert.ok(Math.abs(seventyFiveLayout.rightMarginRatio - 0.06) < 0.005);
+  assert.equal(seventyFiveLayout.columns, 5);
+  assert.ok(Math.abs(seventyFiveLayout.leftMarginRatio - 0.15) < 0.005);
+  assert.ok(Math.abs(seventyFiveLayout.rightMarginRatio - 0.15) < 0.005);
 
   const sixtyPercent = await openZoomStep(0.6);
   const wideLayout = sixtyPercent.metrics;
-  assert.ok(wideLayout.columns > seventyFiveLayout.columns);
-  assert.ok(wideLayout.cardWidth < desktopLayout.cardWidth);
-  assert.ok(Math.abs(wideLayout.leftMarginRatio - 0.06) < 0.005);
-  assert.ok(Math.abs(wideLayout.rightMarginRatio - 0.06) < 0.005);
+  assert.equal(wideLayout.columns, 6);
+  assert.ok(Math.abs(wideLayout.leftMarginRatio - 0.15) < 0.005);
+  assert.ok(Math.abs(wideLayout.rightMarginRatio - 0.15) < 0.005);
   assertCompleteDualRings(await ringGeometry(
     sixtyPercent.page.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
   ));

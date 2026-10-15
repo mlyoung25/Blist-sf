@@ -292,7 +292,7 @@ export default function ShowtimesApp() {
 
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-4 text-zinc-100 md:px-8 md:py-6">
-      <section className="w-full lg:mx-auto lg:w-[70vw] ultrawide:w-[88vw]">
+      <section className="w-full lg:mx-auto lg:w-[70vw]">
         <div data-control-bar className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 controls:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
           <label className="relative">
             <span className="sr-only">Search movies</span>
@@ -440,7 +440,7 @@ export default function ShowtimesApp() {
 
         <div
           data-movie-grid
-          className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 ultrawide:grid-cols-[repeat(auto-fill,minmax(190px,1fr))]"
+          className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 cols5:grid-cols-5 cols6:grid-cols-6"
         >
           {pinnedMovies.length > 0 && (
             <div className="col-span-full flex items-center gap-3 pt-1" data-divider="pinned">
