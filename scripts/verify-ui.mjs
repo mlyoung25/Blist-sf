@@ -36,6 +36,7 @@ const onFilmOnlyMovie = allHiddenPayload.movies.find((movie) => !isOneDay(movie)
 const neutralMovie = defaultPayload.movies.find((movie) => !isOneDay(movie) && !movie.onFilm.matched);
 const unknownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length === 0);
 const knownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length > 0);
+const languageCoverage = defaultPayload.movies.filter((movie) => movie.languages.length > 0).length;
 const directorSearchTarget = defaultPayload.movies.find((movie) => movie.directors.some((director) => {
   const searchableWithoutDirectors = [
     movie.title,
@@ -56,10 +57,20 @@ assert.ok(dualBorderMovie);
 assert.ok(onFilmOnlyMovie);
 assert.ok(neutralMovie);
 assert.ok(unknownLanguageMovie);
+assert.ok(knownLanguageMovie);
 assert.ok(directorSearchTarget);
 assert.equal(defaultPayload.onFilmSource.error, undefined);
 assert.equal(defaultPayload.onFilmSource.matchedMovieCount, onFilmMovies.length);
 assert.equal(onFilmMovies.every((movie) => movie.onFilm.sourceUrl === "https://scenef.com/on-film"), true);
+assert.equal(defaultPayload.languageMetadata.error, undefined);
+assert.equal(defaultPayload.languageMetadata.field, "P364 (original language of film)");
+assert.equal(defaultPayload.languageMetadata.matchedMovieCount, languageCoverage);
+assert.ok(languageCoverage > 0);
+assert.equal(
+  defaultPayload.movies.filter((movie) => movie.languages.length > 0)
+    .every((movie) => movie.languageSource?.provider === "SceneF" || movie.languageSource?.provider === "Wikidata"),
+  true,
+);
 
 function ratingScore(movie) {
   return movie.ratings.imdb;
@@ -195,10 +206,13 @@ try {
   assert.equal(await page.getByText("TMDB", { exact: true }).count(), 0);
   const unknownLanguageCard = page.locator(`article[data-movie-id=${JSON.stringify(unknownLanguageMovie.id)}]`);
   await unknownLanguageCard.getByText("Language: Unknown", { exact: true }).waitFor();
-  if (knownLanguageMovie) {
-    const knownLanguageCard = page.locator(`article[data-movie-id=${JSON.stringify(knownLanguageMovie.id)}]`);
-    await knownLanguageCard.getByText(`Language: ${knownLanguageMovie.languages.join(", ")}`, { exact: true }).waitFor();
-  }
+  assert.equal(await unknownLanguageCard.locator("[data-language-source='unknown']").count(), 1);
+  const knownLanguageCard = page.locator(`article[data-movie-id=${JSON.stringify(knownLanguageMovie.id)}]`);
+  await knownLanguageCard.getByText(`Language: ${knownLanguageMovie.languages.join(", ")}`, { exact: true }).waitFor();
+  assert.equal(
+    await knownLanguageCard.locator(`[data-language-source=${JSON.stringify(knownLanguageMovie.languageSource.provider)}]`).count(),
+    1,
+  );
 
   const cardFor = (movie) => page.locator(`article[data-movie-id=${JSON.stringify(movie.id)}]`);
   const frameFor = (movie) => cardFor(movie).locator("[data-card-frame]");
@@ -231,8 +245,12 @@ try {
   );
   assert.equal(posterRatios.every((ratio) => Math.abs(ratio - (2 / 3)) < 0.01), true);
 
-  const oneDayCheckbox = page.getByLabel("One day", { exact: true });
-  const onFilmCheckbox = page.getByLabel("On Film", { exact: true });
+  const oneDayCheckbox = page.getByLabel("One day only", { exact: true });
+  const onFilmCheckbox = page.getByLabel("On film", { exact: true });
+  assert.equal(await page.getByLabel("One day", { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("On Film", { exact: true }).count(), 0);
+  const oneDayControl = page.locator("[data-filter-control='one-day']");
+  const onFilmControl = page.locator("[data-filter-control='on-film']");
   const borderAndControlColors = await Promise.all([
     cardFor(oneDayOnlyMovie).evaluate((card) => getComputedStyle(card).borderTopColor),
     oneDayCheckbox.evaluate((control) => getComputedStyle(control).accentColor),
@@ -241,14 +259,46 @@ try {
   ]);
   assert.equal(borderAndControlColors[0], borderAndControlColors[1]);
   assert.equal(borderAndControlColors[2], borderAndControlColors[3]);
+  assert.equal(
+    await oneDayControl.evaluate((control) => getComputedStyle(control).borderTopColor),
+    borderAndControlColors[0],
+  );
+  assert.equal(
+    await onFilmControl.evaluate((control) => getComputedStyle(control).borderTopColor),
+    borderAndControlColors[2],
+  );
+  const uncheckedBackgrounds = await Promise.all([
+    oneDayControl.evaluate((control) => getComputedStyle(control).backgroundColor),
+    onFilmControl.evaluate((control) => getComputedStyle(control).backgroundColor),
+  ]);
+  await oneDayCheckbox.check();
+  await onFilmCheckbox.check();
+  assert.equal(
+    await oneDayControl.evaluate((control) => getComputedStyle(control).borderTopColor),
+    borderAndControlColors[0],
+  );
+  assert.equal(
+    await onFilmControl.evaluate((control) => getComputedStyle(control).borderTopColor),
+    borderAndControlColors[2],
+  );
+  assert.notEqual(
+    await oneDayControl.evaluate((control) => getComputedStyle(control).backgroundColor),
+    uncheckedBackgrounds[0],
+  );
+  assert.notEqual(
+    await onFilmControl.evaluate((control) => getComputedStyle(control).backgroundColor),
+    uncheckedBackgrounds[1],
+  );
+  await oneDayCheckbox.uncheck();
+  await onFilmCheckbox.uncheck();
   await oneDayCheckbox.focus();
   assert.equal(
-    await oneDayCheckbox.locator("..").evaluate((label) => getComputedStyle(label).borderTopColor),
+    await oneDayControl.evaluate((label) => getComputedStyle(label).borderTopColor),
     borderAndControlColors[0],
   );
   await onFilmCheckbox.focus();
   assert.equal(
-    await onFilmCheckbox.locator("..").evaluate((label) => getComputedStyle(label).borderTopColor),
+    await onFilmControl.evaluate((label) => getComputedStyle(label).borderTopColor),
     borderAndControlColors[2],
   );
 
@@ -405,41 +455,68 @@ try {
   }).length);
   assert.equal(unlabeledControls, 0);
 
+  const desktopControlLayout = await page.locator("[data-control-bar]").evaluate((bar) => {
+    const children = [...bar.children].map((child) => child.getBoundingClientRect());
+    return {
+      rowCount: new Set(children.map((box) => Math.round(box.top))).size,
+      fitsWidth: children.every((box) => box.left >= bar.getBoundingClientRect().left
+        && box.right <= bar.getBoundingClientRect().right + 0.5),
+    };
+  });
+  assert.equal(desktopControlLayout.rowCount, 1);
+  assert.equal(desktopControlLayout.fitsWidth, true);
+
   const desktopLayout = await layoutMetrics(page);
   assert.equal(desktopLayout.columns, 4);
   assert.ok(Math.abs(desktopLayout.leftMarginRatio - 0.15) < 0.005);
   assert.ok(Math.abs(desktopLayout.rightMarginRatio - 0.15) < 0.005);
 
-  const eightyPercent = await context.newPage();
-  eightyPercent.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
-  eightyPercent.on("pageerror", (error) => pageErrors.push(error.message));
-  await eightyPercent.setViewportSize({ width: 1800, height: 1100 });
-  await eightyPercent.goto(baseUrl, { waitUntil: "networkidle" });
-  const eightyLayout = await layoutMetrics(eightyPercent);
+  const openZoomStep = async (zoom) => {
+    const zoomContext = await browser.newContext({
+      viewport: {
+        width: Math.round(1440 / zoom),
+        height: Math.round(900 / zoom),
+      },
+      deviceScaleFactor: zoom,
+    });
+    const zoomPage = await zoomContext.newPage();
+    zoomPage.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    zoomPage.on("pageerror", (error) => pageErrors.push(error.message));
+    await zoomPage.goto(baseUrl, { waitUntil: "networkidle" });
+    const devicePixelRatio = await zoomPage.evaluate(() => window.devicePixelRatio);
+    const metrics = await layoutMetrics(zoomPage);
+    assert.ok(Math.abs(devicePixelRatio - zoom) < 0.001);
+    assert.ok(Math.abs((metrics.viewportWidth * devicePixelRatio) - 1440) < 1);
+    return { context: zoomContext, page: zoomPage, metrics, devicePixelRatio };
+  };
+
+  const eightyPercent = await openZoomStep(0.8);
+  const eightyLayout = eightyPercent.metrics;
   assert.equal(eightyLayout.columns, 4);
   assert.ok(Math.abs(eightyLayout.leftMarginRatio - 0.15) < 0.005);
   assert.ok(Math.abs(eightyLayout.rightMarginRatio - 0.15) < 0.005);
   assert.ok(Math.abs((eightyLayout.cardWidth * 0.8) - desktopLayout.cardWidth) < 5);
   assertCompleteDualRings(await ringGeometry(
-    eightyPercent.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
+    eightyPercent.page.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
   ));
 
-  const wide = await context.newPage();
-  wide.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
-  wide.on("pageerror", (error) => pageErrors.push(error.message));
-  await wide.setViewportSize({ width: 2400, height: 1200 });
-  await wide.goto(baseUrl, { waitUntil: "networkidle" });
-  const wideLayout = await layoutMetrics(wide);
-  assert.ok(wideLayout.columns > eightyLayout.columns);
+  const seventyFivePercent = await openZoomStep(0.75);
+  const seventyFiveLayout = seventyFivePercent.metrics;
+  assert.ok(seventyFiveLayout.columns > eightyLayout.columns);
+  assert.ok(seventyFiveLayout.cardWidth < desktopLayout.cardWidth);
+  assert.ok(Math.abs(seventyFiveLayout.leftMarginRatio - 0.06) < 0.005);
+  assert.ok(Math.abs(seventyFiveLayout.rightMarginRatio - 0.06) < 0.005);
+
+  const sixtyPercent = await openZoomStep(0.6);
+  const wideLayout = sixtyPercent.metrics;
+  assert.ok(wideLayout.columns > seventyFiveLayout.columns);
   assert.ok(wideLayout.cardWidth < desktopLayout.cardWidth);
   assert.ok(Math.abs(wideLayout.leftMarginRatio - 0.06) < 0.005);
   assert.ok(Math.abs(wideLayout.rightMarginRatio - 0.06) < 0.005);
   assertCompleteDualRings(await ringGeometry(
-    wide.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
+    sixtyPercent.page.locator(`article[data-movie-id=${JSON.stringify(dualBorderMovie.id)}]`),
   ));
 
   const mobile = await context.newPage();
@@ -475,12 +552,13 @@ try {
     oneDayCount,
     multiDayCount,
     compactStateFiltersVerified: true,
+    desktopControlRows: desktopControlLayout.rowCount,
     stateFilterColors: {
       oneDay: borderAndControlColors[0],
       onFilm: borderAndControlColors[2],
     },
     borderStatesAndDimensionsVerified: true,
-    completeDualRingsVerifiedAtWidths: [390, 1440, 1800, 2400],
+    completeDualRingsVerifiedAtCssWidths: [390, 1440, 1800, 2400],
     outerAndInnerBorderWidths: "2px each side",
     interRingGap: "3px each side",
     theaterMultiselectUnionCount: unionCount,
@@ -488,20 +566,33 @@ try {
     dateBubbleCount: availableDates.length + 1,
     selectedDateCount,
     onFilmMovieCount: onFilmMovies.length,
-    languageCoverage: defaultPayload.movies.filter((movie) => movie.languages.length > 0).length,
+    languageCoverage,
+    languageFallbackCount: defaultPayload.movies.length - languageCoverage,
+    languageSource: defaultPayload.languageMetadata.field,
     directorOnlySearchResults: 0,
     desktop1440: {
       columns: desktopLayout.columns,
       marginPercentPerSide: Number((desktopLayout.leftMarginRatio * 100).toFixed(1)),
       cardWidth: Math.round(desktopLayout.cardWidth),
     },
-    zoom80Equivalent1800: {
+    realZoom80Percent: {
+      devicePixelRatio: eightyPercent.devicePixelRatio,
+      cssViewportWidth: eightyLayout.viewportWidth,
       columns: eightyLayout.columns,
       marginPercentPerSide: Number((eightyLayout.leftMarginRatio * 100).toFixed(1)),
       cardWidth: Math.round(eightyLayout.cardWidth),
       scaledCardWidth: Math.round(eightyLayout.cardWidth * 0.8),
     },
-    zoom60Equivalent2400: {
+    realZoom75Percent: {
+      devicePixelRatio: seventyFivePercent.devicePixelRatio,
+      cssViewportWidth: seventyFiveLayout.viewportWidth,
+      columns: seventyFiveLayout.columns,
+      marginPercentPerSide: Number((seventyFiveLayout.leftMarginRatio * 100).toFixed(1)),
+      cardWidth: Math.round(seventyFiveLayout.cardWidth),
+    },
+    realZoom60Percent: {
+      devicePixelRatio: sixtyPercent.devicePixelRatio,
+      cssViewportWidth: wideLayout.viewportWidth,
       columns: wideLayout.columns,
       marginPercentPerSide: Number((wideLayout.leftMarginRatio * 100).toFixed(1)),
       cardWidth: Math.round(wideLayout.cardWidth),

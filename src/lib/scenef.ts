@@ -1,6 +1,8 @@
 export const SCENEF_BASE_URL = "https://scenef.com";
 export const SCENEF_CACHE_TAG = "scenef-showtimes";
 export const SCENEF_ON_FILM_URL = `${SCENEF_BASE_URL}/on-film`;
+export const WIKIDATA_LANGUAGE_PROPERTY_URL = "https://www.wikidata.org/wiki/Property:P364";
+const WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql";
 
 export type VenueConfig = {
   id: string;
@@ -121,6 +123,11 @@ export type Movie = {
   rating: string | null;
   genres: string[];
   languages: string[];
+  languageSource: {
+    provider: "SceneF" | "Wikidata";
+    sourceUrl: string;
+    field: string;
+  } | null;
   overview: string | null;
   posterUrl: string | null;
   ratings: {
@@ -160,6 +167,13 @@ export type MoviesPayload = {
   };
   onFilmSource: {
     sourceUrl: string;
+    fetchedAt: string | null;
+    matchedMovieCount: number;
+    error?: string;
+  };
+  languageMetadata: {
+    sourceUrl: string;
+    field: string;
     fetchedAt: string | null;
     matchedMovieCount: number;
     error?: string;
@@ -250,6 +264,51 @@ export function applyOnFilmMembership(
       sourceUrl: SCENEF_ON_FILM_URL,
       fetchedAt,
       matchedMovieCount: movies.filter((movie) => movie.onFilm.matched).length,
+    },
+  };
+}
+
+export type VerifiedLanguageRecord = {
+  tmdbId: number | null;
+  imdbId: string | null;
+  languages: string[];
+  sourceUrl: string;
+};
+
+export function applyVerifiedLanguages(
+  payload: MoviesPayload,
+  records: readonly VerifiedLanguageRecord[],
+  fetchedAt: string,
+): MoviesPayload {
+  const byTmdb = new Map(records.flatMap((record) => (
+    record.tmdbId === null ? [] : [[record.tmdbId, record] as const]
+  )));
+  const byImdb = new Map(records.flatMap((record) => (
+    record.imdbId === null ? [] : [[record.imdbId, record] as const]
+  )));
+  const movies = payload.movies.map((movie) => {
+    if (movie.languages.length > 0) return movie;
+    const record = (movie.tmdbId === null ? undefined : byTmdb.get(movie.tmdbId))
+      ?? (movie.imdbId === null ? undefined : byImdb.get(movie.imdbId));
+    if (!record || record.languages.length === 0) return movie;
+    return {
+      ...movie,
+      languages: [...record.languages].sort((first, second) => first.localeCompare(second)),
+      languageSource: {
+        provider: "Wikidata" as const,
+        sourceUrl: record.sourceUrl,
+        field: "P364 (original language of film)",
+      },
+    };
+  });
+  return {
+    ...payload,
+    movies,
+    languageMetadata: {
+      sourceUrl: WIKIDATA_LANGUAGE_PROPERTY_URL,
+      field: "P364 (original language of film)",
+      fetchedAt,
+      matchedMovieCount: movies.filter((movie) => movie.languages.length > 0).length,
     },
   };
 }
@@ -375,6 +434,13 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             rating: film.mpaa ?? null,
             genres: film.genres ?? [],
             languages: film.languages ?? [],
+            languageSource: film.languages && film.languages.length > 0
+              ? {
+                  provider: "SceneF",
+                  sourceUrl: `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`,
+                  field: "films[].languages",
+                }
+              : null,
             overview: film.overview ?? null,
             posterUrl: film.posterUrl ?? null,
             ratings: {
@@ -392,7 +458,14 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         if (!movieEntry.movie.posterUrl && film.posterUrl) movieEntry.movie.posterUrl = film.posterUrl;
         if (!movieEntry.movie.overview && film.overview) movieEntry.movie.overview = film.overview;
         if (movieEntry.movie.directors.length === 0 && film.directors) movieEntry.movie.directors = film.directors;
-        if (movieEntry.movie.languages.length === 0 && film.languages) movieEntry.movie.languages = film.languages;
+        if (movieEntry.movie.languages.length === 0 && film.languages && film.languages.length > 0) {
+          movieEntry.movie.languages = film.languages;
+          movieEntry.movie.languageSource = {
+            provider: "SceneF",
+            sourceUrl: `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`,
+            field: "films[].languages",
+          };
+        }
         if (movieEntry.movie.sceneFSlug === null && film.slug) movieEntry.movie.sceneFSlug = film.slug;
         if (movieEntry.movie.tmdbId === null && film.tmdbId) movieEntry.movie.tmdbId = film.tmdbId;
         if (movieEntry.movie.imdbId === null && film.imdbId) movieEntry.movie.imdbId = film.imdbId;
@@ -491,6 +564,12 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
       fetchedAt: null,
       matchedMovieCount: 0,
     },
+    languageMetadata: {
+      sourceUrl: WIKIDATA_LANGUAGE_PROPERTY_URL,
+      field: "P364 (original language of film)",
+      fetchedAt: null,
+      matchedMovieCount: movies.filter((movie) => movie.languages.length > 0).length,
+    },
   };
 }
 
@@ -519,6 +598,10 @@ export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: Feed
     onFilmSource: {
       ...payload.onFilmSource,
       matchedMovieCount: movies.filter((movie) => movie.onFilm.matched).length,
+    },
+    languageMetadata: {
+      ...payload.languageMetadata,
+      matchedMovieCount: movies.filter((movie) => movie.languages.length > 0).length,
     },
     sources: [...payload.sources, ...sourceStatus(amcFeeds)].sort((first, second) => first.venueName.localeCompare(second.venueName)),
     amcFilter: {
@@ -561,6 +644,84 @@ async function fetchOnFilmMembership() {
   };
 }
 
+type WikidataBinding = {
+  film?: { value?: string };
+  tmdb?: { value?: string };
+  imdb?: { value?: string };
+  languageLabel?: { value?: string };
+};
+
+async function fetchVerifiedLanguages(movies: readonly Movie[]) {
+  const candidates = movies.filter((movie) => (
+    movie.languages.length === 0 && (movie.tmdbId !== null || movie.imdbId !== null)
+  ));
+  const records = new Map<string, VerifiedLanguageRecord>();
+  let fetchedAt = new Date().toISOString();
+
+  for (let index = 0; index < candidates.length; index += 40) {
+    const batch = candidates.slice(index, index + 40);
+    const tmdbValues = batch.flatMap((movie) => movie.tmdbId === null ? [] : [`"${movie.tmdbId}"`]);
+    const imdbValues = batch.flatMap((movie) => (
+      movie.tmdbId !== null || movie.imdbId === null || !/^tt\d+$/.test(movie.imdbId)
+        ? []
+        : [`"${movie.imdbId}"`]
+    ));
+    const identifierClauses = [
+      tmdbValues.length > 0
+        ? `{ VALUES ?tmdb { ${tmdbValues.join(" ")} } ?film wdt:P4947 ?tmdb. }`
+        : null,
+      imdbValues.length > 0
+        ? `{ VALUES ?imdb { ${imdbValues.join(" ")} } ?film wdt:P345 ?imdb. }`
+        : null,
+    ].filter((clause): clause is string => clause !== null);
+    if (identifierClauses.length === 0) continue;
+
+    const query = `
+      SELECT DISTINCT ?film ?tmdb ?imdb ?languageLabel WHERE {
+        ${identifierClauses.join(" UNION ")}
+        ?film wdt:P364 ?language.
+        ?language rdfs:label ?languageLabel.
+        FILTER(LANG(?languageLabel) = "en")
+      }
+    `;
+    const response = await fetch(`${WIKIDATA_SPARQL_URL}?format=json&query=${encodeURIComponent(query)}`, {
+      headers: {
+        Accept: "application/sparql-results+json",
+        "User-Agent": "Blist-sf/0.1 (https://github.com/mlyoung25/Blist-sf)",
+      },
+      next: {
+        revalidate: 43_200,
+        tags: [SCENEF_CACHE_TAG, "wikidata-film-languages"],
+      },
+    });
+    if (!response.ok) throw new Error(`Wikidata language query returned HTTP ${response.status}`);
+    fetchedAt = response.headers.get("date") ?? fetchedAt;
+    const data = await response.json() as {
+      results?: { bindings?: WikidataBinding[] };
+    };
+    for (const binding of data.results?.bindings ?? []) {
+      const tmdbId = binding.tmdb?.value && /^\d+$/.test(binding.tmdb.value)
+        ? Number(binding.tmdb.value)
+        : null;
+      const imdbId = binding.imdb?.value && /^tt\d+$/.test(binding.imdb.value)
+        ? binding.imdb.value
+        : null;
+      const language = binding.languageLabel?.value?.trim();
+      const entityUrl = binding.film?.value?.replace(/^http:/, "https:");
+      const key = tmdbId !== null ? `tmdb:${tmdbId}` : imdbId !== null ? `imdb:${imdbId}` : null;
+      if (!key || !language || !entityUrl) continue;
+      const existing = records.get(key);
+      if (existing) {
+        if (!existing.languages.includes(language)) existing.languages.push(language);
+      } else {
+        records.set(key, { tmdbId, imdbId, languages: [language], sourceUrl: entityUrl });
+      }
+    }
+  }
+
+  return { records: [...records.values()], fetchedAt };
+}
+
 export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<MoviesPayload> {
   const [settled, onFilmResult] = await Promise.all([
     Promise.allSettled(VENUES.map(fetchVenue)),
@@ -573,7 +734,7 @@ export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<Mo
   if (feeds.length === 0) throw new Error("Every SceneF theater request failed.");
 
   const normalizedPayload = normalizeFeeds(feeds);
-  const payload = onFilmResult.ok
+  let payload = onFilmResult.ok
     ? applyOnFilmMembership(normalizedPayload, onFilmResult.value.slugs, onFilmResult.value.fetchedAt)
     : {
         ...normalizedPayload,
@@ -582,6 +743,18 @@ export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<Mo
           error: onFilmResult.error instanceof Error ? onFilmResult.error.message : "SceneF On Film request failed",
         },
       };
+  try {
+    const languageResult = await fetchVerifiedLanguages(payload.movies);
+    payload = applyVerifiedLanguages(payload, languageResult.records, languageResult.fetchedAt);
+  } catch (error) {
+    payload = {
+      ...payload,
+      languageMetadata: {
+        ...payload.languageMetadata,
+        error: error instanceof Error ? error.message : "Wikidata language query failed",
+      },
+    };
+  }
   const failedSources = settled.flatMap((result, index) => {
     if (result.status === "fulfilled") return [];
     const venue = VENUES[index];

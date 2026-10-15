@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AMC_VENUES,
   applyOnFilmMembership,
+  applyVerifiedLanguages,
   excludeMoviesPlayingAtAmc,
   imdbMovieUrl,
   isLikelyFilm,
@@ -14,6 +15,7 @@ import {
   titlesMatch,
   tmdbMovieUrl,
   VENUES,
+  WIKIDATA_LANGUAGE_PROPERTY_URL,
   type SceneFFilm,
   type SceneFFeed,
 } from "./scenef.ts";
@@ -134,6 +136,50 @@ test("the same movie becomes one card with complete theater runs", () => {
   );
 });
 
+test("verified Wikidata language metadata fills only missing SceneF language data", () => {
+  const payload = normalizeFeeds([{
+    venue: venue("roxie"),
+    feed: feed("roxie", [
+      realFilm,
+      { key: "tmdb-2", tmdbId: 2, imdbId: "tt0000002", title: "Other Film", year: 2026 },
+    ], [
+      screening("known", "tmdb-1", "roxie", "2026-10-15"),
+      screening("missing", "tmdb-2", "roxie", "2026-10-16"),
+    ]),
+  }]);
+  const enriched = applyVerifiedLanguages(payload, [
+    {
+      tmdbId: 1,
+      imdbId: null,
+      languages: ["French"],
+      sourceUrl: "https://www.wikidata.org/entity/Q1",
+    },
+    {
+      tmdbId: 2,
+      imdbId: null,
+      languages: ["Spanish", "English"],
+      sourceUrl: "https://www.wikidata.org/entity/Q2",
+    },
+  ], "2026-10-15T11:00:00Z");
+
+  const sceneFLanguage = enriched.movies.find((movie) => movie.tmdbId === 1);
+  const wikidataLanguage = enriched.movies.find((movie) => movie.tmdbId === 2);
+  assert.deepEqual(sceneFLanguage?.languages, ["English"]);
+  assert.equal(sceneFLanguage?.languageSource?.provider, "SceneF");
+  assert.deepEqual(wikidataLanguage?.languages, ["English", "Spanish"]);
+  assert.deepEqual(wikidataLanguage?.languageSource, {
+    provider: "Wikidata",
+    sourceUrl: "https://www.wikidata.org/entity/Q2",
+    field: "P364 (original language of film)",
+  });
+  assert.deepEqual(enriched.languageMetadata, {
+    sourceUrl: WIKIDATA_LANGUAGE_PROPERTY_URL,
+    field: "P364 (original language of film)",
+    fetchedAt: "2026-10-15T11:00:00Z",
+    matchedMovieCount: 2,
+  });
+});
+
 test("title matching normalizes punctuation, diacritics, articles, and format suffixes", () => {
   assert.equal(normalizeMovieTitle("Amélie’s & Friends"), "amelies and friends");
   assert.equal(titlesMatch("The A Real Film", "A Real Film — IMAX"), true);
@@ -161,6 +207,7 @@ test("AMC filtering excludes the entire combined movie card by normalized title"
   assert.equal(filtered.amcFilter.enabled, true);
   assert.equal(filtered.amcFilter.excludedMovieCount, 1);
   assert.deepEqual(filtered.amcFilter.excludedTitles, ["A Real Film"]);
+  assert.equal(filtered.languageMetadata.matchedMovieCount, 0);
 });
 
 test("AMC sources are exactly Kabuki and Metreon", () => {

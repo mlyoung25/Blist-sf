@@ -232,7 +232,15 @@ export default function ShowtimesApp() {
             </a>
           </h2>
           {movieDetails(movie) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(movie)}</p>}
-          <p className="mt-1 text-xs text-zinc-500">Language: <span className="text-zinc-400">{movieLanguages(movie)}</span></p>
+          <p
+            className="mt-1 text-xs text-zinc-500"
+            data-language-source={movie.languageSource?.provider ?? "unknown"}
+            title={movie.languageSource
+              ? `${movie.languageSource.provider}: ${movie.languageSource.field}`
+              : "No verified language metadata is available"}
+          >
+            Language: <span className="text-zinc-400">{movieLanguages(movie)}</span>
+          </p>
           <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
             <a
               href={imdbMovieUrl(movie)}
@@ -285,7 +293,7 @@ export default function ShowtimesApp() {
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-4 text-zinc-100 md:px-8 md:py-6">
       <section className="w-full lg:mx-auto lg:w-[70vw] ultrawide:w-[88vw]">
-        <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 controls:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
+        <div data-control-bar className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 controls:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
           <label className="relative">
             <span className="sr-only">Search movies</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
@@ -323,24 +331,34 @@ export default function ShowtimesApp() {
             </fieldset>
           </details>
 
-          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm focus-within:border-blue-500">
+          <label
+            data-filter-control="one-day"
+            className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-blue-500 px-3 text-sm focus-within:ring-2 focus-within:ring-blue-500/50 ${
+              oneDayOnly ? "bg-blue-500/15 text-blue-100" : "bg-zinc-900 text-zinc-200"
+            }`}
+          >
             <input
               type="checkbox"
               checked={oneDayOnly}
               onChange={(event) => setOneDayOnly(event.target.checked)}
               className="size-4 accent-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
             />
-            One day
+            One day only
           </label>
 
-          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm focus-within:border-yellow-400">
+          <label
+            data-filter-control="on-film"
+            className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-yellow-400 px-3 text-sm focus-within:ring-2 focus-within:ring-yellow-400/50 ${
+              onFilmOnly ? "bg-yellow-400/15 text-yellow-100" : "bg-zinc-900 text-zinc-200"
+            }`}
+          >
             <input
               type="checkbox"
               checked={onFilmOnly}
               onChange={(event) => setOnFilmOnly(event.target.checked)}
               className="size-4 accent-yellow-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-400"
             />
-            On Film
+            On film
           </label>
 
           <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 text-sm">
@@ -467,6 +485,15 @@ export default function ShowtimesApp() {
                 ? `; unavailable for this refresh: ${payload.onFilmSource.error}`
                 : `; ${payload.onFilmSource.matchedMovieCount} current movies matched at ${payload.onFilmSource.fetchedAt ? new Date(payload.onFilmSource.fetchedAt).toLocaleString() : "an unknown time"}.`}
             </p>
+            <p className="mt-2">
+              Language metadata uses{" "}
+              <a className="underline hover:text-zinc-300" href={payload.languageMetadata.sourceUrl} target="_blank" rel="noreferrer">
+                Wikidata {payload.languageMetadata.field}
+              </a>
+              {payload.languageMetadata.error
+                ? `; unavailable for this refresh: ${payload.languageMetadata.error}. Unknown is shown without inference.`
+                : `; ${payload.languageMetadata.matchedMovieCount} current movies have a verified language. Unknown means neither SceneF nor Wikidata supplied one.`}
+            </p>
             <ul className="mt-3 space-y-1">
               {payload.sources.map((source) => (
                 <li key={source.venueId}>
@@ -537,7 +564,15 @@ export default function ShowtimesApp() {
                   {selectedMovie.directors.length > 0 && movieDetails(selectedMovie) && <span aria-hidden="true"> · </span>}
                   <span>{movieDetails(selectedMovie)}</span>
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">Language: {movieLanguages(selectedMovie)}</p>
+                <p
+                  className="mt-1 text-xs text-zinc-500"
+                  data-language-source={selectedMovie.languageSource?.provider ?? "unknown"}
+                  title={selectedMovie.languageSource
+                    ? `${selectedMovie.languageSource.provider}: ${selectedMovie.languageSource.field}`
+                    : "No verified language metadata is available"}
+                >
+                  Language: {movieLanguages(selectedMovie)}
+                </p>
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
                   <a
                     className="inline-flex items-center gap-1 hover:text-white hover:underline"

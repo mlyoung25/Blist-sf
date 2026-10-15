@@ -42,16 +42,29 @@ Letterboxd and TMDB rating labels are hidden until supported API access is confi
 SceneF TMDB and IMDb IDs still drive direct movie links where available, with encoded
 search links as fallbacks.
 
-SceneF's current listings, film pages, OpenAPI contract, and public film-details tool
-do not expose language metadata. Cards therefore show **Language: Unknown** rather
-than inferring language from title, country, cast, or external databases. The importer
-will preserve a future SceneF `languages` field when present.
+SceneF is read from `/api/listings?region=sf&venue=…`; the importer uses each
+`films[]` record's IDs, title, year, runtime, rating, genres, overview, directors,
+poster, and ratings plus `screenings[]` schedule/provenance fields. The live
+`films[]` records, `/film/{slug}` pages, OpenAPI contract, and public
+`scenef_film_details` MCP result currently expose no `language`,
+`original_language`, or `spoken_languages` field.
+
+For films carrying a SceneF-linked TMDB ID (or an IMDb ID when no TMDB ID exists),
+the app now queries Wikidata without credentials and displays the structured P364
+“original language of film” value with entity-level provenance. It preserves a future
+SceneF `films[].languages` value ahead of Wikidata. **Language: Unknown** remains the
+honest fallback when neither source has a verified value; country and title are never
+used as proxies.
 
 ### TODO
 
 - [ ] Apply for official Letterboxd API access at `api@letterboxd.com`, configure its
   OAuth client credentials, and add cached, provenance-aware aggregate ratings.
 - [ ] Obtain an approved TMDB API key before adding TMDB ratings.
+- [ ] If spoken-language detail is required, configure a TMDB API Read Access Token
+  and use `/3/movie/{id}` fields `original_language` and `spoken_languages`. Public
+  TMDB HTML exposes original language but is bot-protected and is not a stable API.
+  OMDb's `Language` field is another option but also requires an API key.
 
 The unofficial `letterboxd-client` package is a typed wrapper around Letterboxd's
 official endpoints; it still requires a Letterboxd-issued API key and secret and does
@@ -70,8 +83,8 @@ server-authored [`/on-film`](https://scenef.com/on-film) page. The app does not 
 membership from age, genre, repertory tags, or theater. The page is cached alongside
 the listings for 12 hours; fetch failures are isolated and reported in the source
 details instead of marking unverified movies. Matching cards receive an accessible
-yellow treatment and can be filtered with the gold **On Film** checkbox. The blue
-**One day** checkbox matches the one-day card's outer border and replaces the
+yellow treatment and can be filtered with the gold **On film** checkbox. The blue
+**One day only** checkbox matches the one-day card's outer border and replaces the
 general run-length selector.
 
 The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
