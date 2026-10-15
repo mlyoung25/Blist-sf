@@ -15,9 +15,11 @@ cannot be checked. Pins and manual hides persist in local storage; pins only reo
 the main movie grid and do not create a separate saved page.
 
 The UI supports simultaneous theater selections and one-day/multi-day filtering.
-One-day cards and runs use a high-contrast cyan treatment. Month dividers use each
-movie's earliest run start, so a run that crosses into a later month stays before that
-month's divider.
+One-day cards use a thicker blue outer border; verified On Film cards use a gold inset
+ring. Cards in both states show concentric blue-outside/gold-inside borders without
+visible status badges. Screen-reader-only status text and the labeled filters preserve
+the same meaning nonvisually. Month dividers use each movie's earliest run start, so a
+run that crosses into a later month stays before that month's divider.
 
 The importer rejects explicit non-film category labels and descriptions (live music,
 music, comedy, concert-like events) plus secret-movie listings. Film metadata and
@@ -31,6 +33,11 @@ Only verified IMDb scores from SceneF are currently displayed and used for sorti
 Letterboxd and TMDB rating labels are hidden until supported API access is configured.
 SceneF TMDB and IMDb IDs still drive direct movie links where available, with encoded
 search links as fallbacks.
+
+SceneF's current listings, film pages, OpenAPI contract, and public film-details tool
+do not expose language metadata. Cards therefore show **Language: Unknown** rather
+than inferring language from title, country, cast, or external databases. The importer
+will preserve a future SceneF `languages` field when present.
 
 ### TODO
 

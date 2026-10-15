@@ -37,6 +37,7 @@ export type SceneFFilm = {
   runtimeMin?: number;
   mpaa?: string;
   genres?: string[];
+  languages?: string[];
   overview?: string;
   directors?: string[];
   posterUrl?: string;
@@ -119,6 +120,7 @@ export type Movie = {
   runtimeMin: number | null;
   rating: string | null;
   genres: string[];
+  languages: string[];
   overview: string | null;
   posterUrl: string | null;
   ratings: {
@@ -372,6 +374,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             runtimeMin: film.runtimeMin ?? null,
             rating: film.mpaa ?? null,
             genres: film.genres ?? [],
+            languages: film.languages ?? [],
             overview: film.overview ?? null,
             posterUrl: film.posterUrl ?? null,
             ratings: {
@@ -389,6 +392,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         if (!movieEntry.movie.posterUrl && film.posterUrl) movieEntry.movie.posterUrl = film.posterUrl;
         if (!movieEntry.movie.overview && film.overview) movieEntry.movie.overview = film.overview;
         if (movieEntry.movie.directors.length === 0 && film.directors) movieEntry.movie.directors = film.directors;
+        if (movieEntry.movie.languages.length === 0 && film.languages) movieEntry.movie.languages = film.languages;
         if (movieEntry.movie.sceneFSlug === null && film.slug) movieEntry.movie.sceneFSlug = film.slug;
         if (movieEntry.movie.tmdbId === null && film.tmdbId) movieEntry.movie.tmdbId = film.tmdbId;
         if (movieEntry.movie.imdbId === null && film.imdbId) movieEntry.movie.imdbId = film.imdbId;

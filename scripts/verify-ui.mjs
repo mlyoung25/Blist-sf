@@ -29,6 +29,21 @@ const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && mov
 const imdbRated = defaultPayload.movies.find((movie) => movie.ratings.imdb !== null);
 const imdbUnavailable = defaultPayload.movies.find((movie) => movie.ratings.imdb === null);
 const onFilmMovies = defaultPayload.movies.filter((movie) => movie.onFilm.matched);
+const isOneDay = (movie) => movie.runs.every((run) => run.durationDays === 1);
+const oneDayOnlyMovie = defaultPayload.movies.find((movie) => isOneDay(movie) && !movie.onFilm.matched);
+const dualBorderMovie = defaultPayload.movies.find((movie) => isOneDay(movie) && movie.onFilm.matched);
+const onFilmOnlyMovie = allHiddenPayload.movies.find((movie) => !isOneDay(movie) && movie.onFilm.matched);
+const neutralMovie = defaultPayload.movies.find((movie) => !isOneDay(movie) && !movie.onFilm.matched);
+const unknownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length === 0);
+const knownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length > 0);
+const directorSearchTarget = defaultPayload.movies.find((movie) => movie.directors.some((director) => {
+  const searchableWithoutDirectors = [
+    movie.title,
+    movie.genres.join(" "),
+    movie.runs.map((run) => run.venueName).join(" "),
+  ].join(" ").toLowerCase();
+  return !searchableWithoutDirectors.includes(director.toLowerCase());
+}));
 const availableDates = [...new Set(defaultPayload.movies.flatMap((movie) => (
   movie.runs.flatMap((run) => run.dates.map((date) => date.date))
 )))].sort();
@@ -36,6 +51,12 @@ assert.ok(multi);
 assert.ok(imdbRated);
 assert.ok(imdbUnavailable);
 assert.ok(onFilmMovies.length > 0);
+assert.ok(oneDayOnlyMovie);
+assert.ok(dualBorderMovie);
+assert.ok(onFilmOnlyMovie);
+assert.ok(neutralMovie);
+assert.ok(unknownLanguageMovie);
+assert.ok(directorSearchTarget);
 assert.equal(defaultPayload.onFilmSource.error, undefined);
 assert.equal(defaultPayload.onFilmSource.matchedMovieCount, onFilmMovies.length);
 assert.equal(onFilmMovies.every((movie) => movie.onFilm.sourceUrl === "https://scenef.com/on-film"), true);
@@ -56,24 +77,6 @@ function formatDate(date, includeYear = false) {
     year: includeYear ? "numeric" : undefined,
     timeZone: "UTC",
   }).format(new Date(`${date}T12:00:00Z`));
-}
-
-function relativeLuminance([red, green, blue]) {
-  const channels = [red, green, blue].map((value) => {
-    const channel = value / 255;
-    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-}
-
-function contrast(first, second) {
-  const bright = Math.max(relativeLuminance(first), relativeLuminance(second));
-  const dark = Math.min(relativeLuminance(first), relativeLuminance(second));
-  return (bright + 0.05) / (dark + 0.05);
-}
-
-function rgb(value) {
-  return value.match(/\d+(?:\.\d+)?/g).slice(0, 3).map(Number);
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -140,6 +143,56 @@ try {
   await unavailableCard.getByText("IMDb unavailable", { exact: true }).waitFor();
   assert.equal(await page.getByText(/^Letterboxd (?:unavailable|\d)/).count(), 0);
   assert.equal(await page.getByText("TMDB", { exact: true }).count(), 0);
+  const unknownLanguageCard = page.locator(`article[data-movie-id=${JSON.stringify(unknownLanguageMovie.id)}]`);
+  await unknownLanguageCard.getByText("Language: Unknown", { exact: true }).waitFor();
+  if (knownLanguageMovie) {
+    const knownLanguageCard = page.locator(`article[data-movie-id=${JSON.stringify(knownLanguageMovie.id)}]`);
+    await knownLanguageCard.getByText(`Language: ${knownLanguageMovie.languages.join(", ")}`, { exact: true }).waitFor();
+  }
+
+  const cardFor = (movie) => page.locator(`article[data-movie-id=${JSON.stringify(movie.id)}]`);
+  const oneDayOnlyClass = await cardFor(oneDayOnlyMovie).getAttribute("class");
+  const dualBorderClass = await cardFor(dualBorderMovie).getAttribute("class");
+  const neutralClass = await cardFor(neutralMovie).getAttribute("class");
+  assert.match(oneDayOnlyClass, /border-2/);
+  assert.match(oneDayOnlyClass, /border-blue-500\/90/);
+  assert.doesNotMatch(oneDayOnlyClass, /ring-yellow-400/);
+  assert.match(dualBorderClass, /border-blue-500\/90/);
+  assert.match(dualBorderClass, /ring-inset/);
+  assert.match(dualBorderClass, /ring-yellow-400\/90/);
+  assert.doesNotMatch(neutralClass, /border-blue-500|ring-yellow-400/);
+  assert.equal(await cardFor(oneDayOnlyMovie).getByText("One-day event", { exact: true }).count(), 0);
+  assert.equal(await cardFor(dualBorderMovie).getByText("On Film", { exact: true }).count(), 0);
+  assert.equal(await cardFor(dualBorderMovie).locator(".sr-only").filter({ hasText: "one-day event" }).count(), 1);
+  assert.equal(await cardFor(dualBorderMovie).locator(".sr-only").filter({ hasText: "verified on SceneF On Film" }).count(), 1);
+
+  const cardWidths = await Promise.all(
+    [oneDayOnlyMovie, dualBorderMovie, neutralMovie].map(async (movie) => (await cardFor(movie).boundingBox()).width),
+  );
+  assert.ok(Math.max(...cardWidths) - Math.min(...cardWidths) < 1);
+  const posterRatios = await Promise.all(
+    [oneDayOnlyMovie, dualBorderMovie, neutralMovie].map(async (movie) => {
+      const box = await cardFor(movie).locator("button").first().boundingBox();
+      return box.width / box.height;
+    }),
+  );
+  assert.equal(posterRatios.every((ratio) => Math.abs(ratio - (2 / 3)) < 0.01), true);
+
+  await page.getByLabel("Show all hidden").check();
+  await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).waitFor();
+  const onFilmOnlyClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).getAttribute("class");
+  assert.match(onFilmOnlyClass, /ring-inset/);
+  assert.match(onFilmOnlyClass, /ring-yellow-400\/90/);
+  assert.doesNotMatch(onFilmOnlyClass, /border-blue-500/);
+  await page.getByLabel("Show all hidden").uncheck();
+  await page.locator("article").first().waitFor();
+
+  const search = page.getByPlaceholder("Search movies and theaters");
+  await search.fill(directorSearchTarget.directors[0]);
+  assert.equal(await page.locator("article").count(), 0);
+  await search.fill(directorSearchTarget.title);
+  assert.ok(await page.locator("article").count() > 0);
+  await search.fill("");
 
   const dateNav = page.getByRole("navigation", { name: "Filter showtimes by date" });
   assert.equal(await dateNav.getByRole("button", { name: "All dates" }).getAttribute("aria-pressed"), "true");
@@ -163,16 +216,12 @@ try {
   await page.getByLabel("On Film only").check();
   assert.equal(await page.locator("article").count(), onFilmMovies.length);
   assert.equal(await page.locator("article[data-on-film='true']").count(), onFilmMovies.length);
-  assert.match(
-    await page.locator("article[data-on-film='true']").first().getAttribute("class"),
-    /border-yellow-400\/70/,
+  assert.equal(
+    await page.locator("article[data-on-film='true']").evaluateAll((cards) => (
+      cards.every((card) => card.className.includes("ring-inset") && card.className.includes("ring-yellow-400/90"))
+    )),
+    true,
   );
-  const onFilmBadge = page.locator("article[data-on-film='true']").first().getByText("On Film", { exact: true });
-  const onFilmColors = await onFilmBadge.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { foreground: style.color, background: style.backgroundColor };
-  });
-  assert.ok(contrast(rgb(onFilmColors.foreground), rgb(onFilmColors.background)) >= 4.5);
   await page.getByLabel("On Film only").uncheck();
 
   const theaterDetails = page.locator("details").first();
@@ -192,12 +241,11 @@ try {
   await page.getByLabel("Filter by run length").selectOption("one-day");
   assert.equal(await page.locator("article").count(), oneDayCount);
   assert.equal(await page.locator("article[data-run-type='multi-day']").count(), 0);
-  const badge = page.getByText("One-day event").first();
-  const colors = await badge.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { foreground: style.color, background: style.backgroundColor };
-  });
-  assert.ok(contrast(rgb(colors.foreground), rgb(colors.background)) >= 4.5);
+  assert.equal(
+    await page.locator("article").evaluateAll((cards) => cards.every((card) => card.className.includes("border-blue-500/90"))),
+    true,
+  );
+  assert.equal(await page.locator("article").getByText("One-day event", { exact: true }).count(), 0);
   await page.getByLabel("Filter by run length").selectOption("multi-day");
   assert.equal(await page.locator("article").count(), multiDayCount);
   await page.getByLabel("Filter by run length").selectOption("all");
@@ -277,6 +325,25 @@ try {
   }).length);
   assert.equal(unlabeledControls, 0);
 
+  const desktopGridColumns = await page.locator("[data-movie-grid]").evaluate((grid) => (
+    getComputedStyle(grid).gridTemplateColumns.split(" ").length
+  ));
+  const desktopCardBox = await page.locator("article").first().boundingBox();
+  const wide = await context.newPage();
+  wide.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  wide.on("pageerror", (error) => pageErrors.push(error.message));
+  await wide.setViewportSize({ width: 2400, height: 1200 });
+  await wide.goto(baseUrl, { waitUntil: "networkidle" });
+  const wideGridColumns = await wide.locator("[data-movie-grid]").evaluate((grid) => (
+    getComputedStyle(grid).gridTemplateColumns.split(" ").length
+  ));
+  const wideCardBox = await wide.locator("article").first().boundingBox();
+  assert.ok(wideGridColumns > desktopGridColumns);
+  assert.ok(wideCardBox.width < desktopCardBox.width);
+  assert.ok((await wide.locator("section").first().boundingBox()).width > 2200);
+
   const mobile = await context.newPage();
   mobile.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -291,7 +358,7 @@ try {
     true,
   );
   const mobileCardBox = await mobile.locator("article").first().boundingBox();
-  assert.ok(mobileCardBox && mobileCardBox.width > 340 && mobileCardBox.width < 390);
+  assert.equal(Math.round(mobileCardBox.width), 358);
 
   const hydrationErrors = consoleErrors.filter((message) => /hydration|did not match|server rendered/i.test(message));
   assert.deepEqual(hydrationErrors, []);
@@ -306,13 +373,18 @@ try {
     pinPersistedAndSortedFirst: true,
     oneDayCount,
     multiDayCount,
-    oneDayBadgeContrast: Number(contrast(rgb(colors.foreground), rgb(colors.background)).toFixed(2)),
+    borderStatesAndDimensionsVerified: true,
     theaterMultiselectUnionCount: unionCount,
     monthDividersValidated: true,
     dateBubbleCount: availableDates.length + 1,
     selectedDateCount,
     onFilmMovieCount: onFilmMovies.length,
-    onFilmBadgeContrast: Number(contrast(rgb(onFilmColors.foreground), rgb(onFilmColors.background)).toFixed(2)),
+    languageCoverage: defaultPayload.movies.filter((movie) => movie.languages.length > 0).length,
+    directorOnlySearchResults: 0,
+    desktopGridColumns,
+    wideGridColumns,
+    desktopCardWidth: Math.round(desktopCardBox.width),
+    wideCardWidth: Math.round(wideCardBox.width),
     mobileCardWidth: Math.round(mobileCardBox.width),
     imdbRatingCoverage: defaultPayload.movies.filter((movie) => movie.ratings.imdb !== null).length,
     letterboxdAndTmdbRatingsHidden: true,

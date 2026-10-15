@@ -70,6 +70,7 @@ const realFilm = {
   title: "A Real Film",
   year: 2026,
   directors: ["A Director"],
+  languages: ["English"],
   posterUrl: "https://image.tmdb.org/poster.jpg",
   ratings: { imdb: 7.8 },
 };
@@ -117,8 +118,8 @@ test("the same movie becomes one card with complete theater runs", () => {
   assert.equal(payload.movies.filter((item) => item.title === "A Real Film").length, 1);
   assert.equal(movie.runs.length, 2);
   assert.deepEqual(
-    { tmdbId: movie.tmdbId, imdbId: movie.imdbId, ratings: movie.ratings },
-    { tmdbId: 1, imdbId: "tt0000001", ratings: { imdb: 7.8 } },
+    { tmdbId: movie.tmdbId, imdbId: movie.imdbId, languages: movie.languages, ratings: movie.ratings },
+    { tmdbId: 1, imdbId: "tt0000001", languages: ["English"], ratings: { imdb: 7.8 } },
   );
 
   const roxieRun = movie.runs.find((run) => run.venueId === "roxie");

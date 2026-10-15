@@ -44,6 +44,10 @@ function movieDetails(movie: Movie) {
   ].filter(Boolean).join(" · ");
 }
 
+function movieLanguages(movie: Movie) {
+  return movie.languages.length > 0 ? movie.languages.join(", ") : "Unknown";
+}
+
 function runSummary(run: TheaterRun) {
   const dates = run.startDate === run.endDate
     ? formatDate(run.startDate)
@@ -137,7 +141,6 @@ export default function ShowtimesApp() {
         const matchesOnFilm = !onFilmOnly || movie.onFilm.matched;
         const haystack = [
           movie.title,
-          movie.directors.join(" "),
           movie.genres.join(" "),
           movie.runs.map((run) => run.venueName).join(" "),
         ].join(" ").toLowerCase();
@@ -185,12 +188,16 @@ export default function ShowtimesApp() {
         data-movie-id={movie.id}
         data-run-type={oneDay ? "one-day" : "multi-day"}
         data-on-film={movie.onFilm.matched ? "true" : "false"}
-        className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-zinc-900 ${
-          movie.onFilm.matched
-            ? "border-yellow-400/70 ring-1 ring-yellow-400/15"
-            : oneDay ? "border-cyan-400/70 ring-1 ring-cyan-400/20" : "border-white/10"
-        }`}
+        className={`flex min-w-0 flex-col overflow-hidden rounded-lg border-2 bg-zinc-900 ${
+          oneDay ? "border-blue-500/90" : "border-white/10"
+        } ${movie.onFilm.matched ? "ring-2 ring-inset ring-yellow-400/90" : ""}`}
       >
+        {(oneDay || movie.onFilm.matched) && (
+          <span className="sr-only">
+            Card status: {oneDay ? "one-day event" : ""}{oneDay && movie.onFilm.matched ? "; " : ""}
+            {movie.onFilm.matched ? "verified on SceneF On Film" : ""}
+          </span>
+        )}
         <button
           onClick={() => setSelectedMovieId(movie.id)}
           className="group text-left"
@@ -206,23 +213,6 @@ export default function ShowtimesApp() {
               />
             ) : (
               <div className="grid size-full place-items-center px-6 text-center text-sm text-zinc-600">Poster unavailable from SceneF</div>
-            )}
-            {oneDay && (
-              <span
-                className="absolute left-3 top-3 rounded-full border border-cyan-300/60 px-2.5 py-1 text-[11px] font-semibold"
-                style={{ backgroundColor: "#083344", color: "#cffafe" }}
-              >
-                One-day event
-              </span>
-            )}
-            {movie.onFilm.matched && (
-              <span
-                className="absolute right-3 top-3 rounded-full border border-yellow-300/60 px-2.5 py-1 text-[11px] font-semibold"
-                style={{ backgroundColor: "#422006", color: "#fef9c3" }}
-                title="Verified on SceneF's On Film page"
-              >
-                On Film
-              </span>
             )}
           </div>
         </button>
@@ -240,6 +230,7 @@ export default function ShowtimesApp() {
             </a>
           </h2>
           {movieDetails(movie) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(movie)}</p>}
+          <p className="mt-1 text-xs text-zinc-500">Language: <span className="text-zinc-400">{movieLanguages(movie)}</span></p>
           <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
             <a
               href={imdbMovieUrl(movie)}
@@ -257,7 +248,7 @@ export default function ShowtimesApp() {
           <button onClick={() => setSelectedMovieId(movie.id)} className="text-left" aria-label={`View full run for ${movie.title}`}>
             <ul className="space-y-1.5 text-xs leading-5 text-zinc-400">
               {movie.runs.map((run) => (
-                <li key={run.venueId} className={run.durationDays === 1 ? "font-medium text-cyan-200" : ""}>
+                <li key={run.venueId} className={run.durationDays === 1 ? "font-medium text-blue-200" : ""}>
                   {runSummary(run)}
                 </li>
               ))}
@@ -290,7 +281,7 @@ export default function ShowtimesApp() {
 
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-4 text-zinc-100 md:px-8 md:py-6">
-      <section className="mx-auto max-w-7xl">
+      <section className="w-full">
         <div className="grid gap-3 border-b border-white/10 pb-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
           <label className="relative">
             <span className="sr-only">Search movies</span>
@@ -298,7 +289,7 @@ export default function ShowtimesApp() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search movies, directors, theaters"
+              placeholder="Search movies and theaters"
               className="h-10 w-full rounded-md border border-white/10 bg-zinc-900 pl-9 pr-3 text-sm outline-none placeholder:text-zinc-600 focus:border-white/30"
             />
           </label>
@@ -430,7 +421,10 @@ export default function ShowtimesApp() {
           <div className="py-20 text-center text-sm text-zinc-500">No movies match these filters.</div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+        <div
+          data-movie-grid
+          className="grid grid-cols-1 gap-4 min-[460px]:grid-cols-2 md:grid-cols-[repeat(auto-fill,minmax(210px,1fr))]"
+        >
           {pinnedMovies.length > 0 && (
             <div className="col-span-full flex items-center gap-3 pt-1" data-divider="pinned">
               <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Pinned</span>
@@ -544,6 +538,7 @@ export default function ShowtimesApp() {
                   {selectedMovie.directors.length > 0 && movieDetails(selectedMovie) && <span aria-hidden="true"> · </span>}
                   <span>{movieDetails(selectedMovie)}</span>
                 </div>
+                <p className="mt-1 text-xs text-zinc-500">Language: {movieLanguages(selectedMovie)}</p>
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
                   <a
                     className="inline-flex items-center gap-1 hover:text-white hover:underline"

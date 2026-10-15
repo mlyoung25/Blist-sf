@@ -49,6 +49,7 @@ function movie(id: string, overrides: Partial<Movie> = {}): Movie {
     runtimeMin: 90,
     rating: "NR",
     genres: [],
+    languages: [],
     overview: null,
     posterUrl: null,
     ratings: { imdb: 7 },
