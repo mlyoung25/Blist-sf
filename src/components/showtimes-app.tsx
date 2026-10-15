@@ -7,7 +7,6 @@ import {
   imdbMovieUrl,
   letterboxdDirectorUrl,
   letterboxdMovieUrl,
-  tmdbMovieUrl,
   type Movie,
   type MoviesPayload,
   type TheaterRun,
@@ -227,24 +226,6 @@ export default function ShowtimesApp() {
               aria-label={`IMDb rating for ${movie.title}: ${movie.ratings.imdb?.toFixed(1) ?? "unavailable"} (opens in a new tab)`}
             >
               IMDb {movie.ratings.imdb?.toFixed(1) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
-            </a>
-            <a
-              href={letterboxdMovieUrl(movie)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-zinc-300 hover:text-white hover:underline"
-              aria-label={`Letterboxd rating for ${movie.title}: ${movie.ratings.letterboxd?.toFixed(2) ?? "unavailable"} (opens in a new tab)`}
-            >
-              Letterboxd {movie.ratings.letterboxd?.toFixed(2) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
-            </a>
-            <a
-              href={tmdbMovieUrl(movie)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-zinc-500 hover:text-white hover:underline"
-              aria-label={`${movie.title} on TMDB (opens in a new tab)`}
-            >
-              TMDB<ExternalLink className="size-3" aria-hidden="true" />
             </a>
           </div>
         </div>
@@ -488,30 +469,12 @@ export default function ShowtimesApp() {
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
                   <a
                     className="inline-flex items-center gap-1 hover:text-white hover:underline"
-                    href={letterboxdMovieUrl(selectedMovie)}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`${selectedMovie.title} on Letterboxd (opens in a new tab)`}
-                  >
-                    Letterboxd {selectedMovie.ratings.letterboxd?.toFixed(2) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
-                  </a>
-                  <a
-                    className="inline-flex items-center gap-1 hover:text-white hover:underline"
                     href={imdbMovieUrl(selectedMovie)}
                     target="_blank"
                     rel="noreferrer"
                     aria-label={`${selectedMovie.title} on IMDb (opens in a new tab)`}
                   >
                     IMDb {selectedMovie.ratings.imdb?.toFixed(1) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
-                  </a>
-                  <a
-                    className="inline-flex items-center gap-1 hover:text-white hover:underline"
-                    href={tmdbMovieUrl(selectedMovie)}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`${selectedMovie.title} on TMDB (opens in a new tab)`}
-                  >
-                    TMDB<ExternalLink className="size-3" aria-hidden="true" />
                   </a>
                 </div>
               </div>

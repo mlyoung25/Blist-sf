@@ -12,12 +12,7 @@ export function movieSortCategory(movie: Movie, today: string): MovieSortCategor
 }
 
 export function movieRatingScore(movie: Movie) {
-  const ratings = [
-    movie.ratings.imdb,
-    movie.ratings.letterboxd === null ? null : movie.ratings.letterboxd * 2,
-  ].filter((rating): rating is number => rating !== null);
-  if (ratings.length === 0) return null;
-  return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  return movie.ratings.imdb;
 }
 
 export function movieProminence(movie: Movie) {
@@ -52,10 +47,6 @@ export function compareMovies(first: Movie, second: Movie, today: string) {
     if (secondRating === null) return -1;
     return secondRating - firstRating;
   }
-
-  const firstRatingCount = Number(first.ratings.imdb !== null) + Number(first.ratings.letterboxd !== null);
-  const secondRatingCount = Number(second.ratings.imdb !== null) + Number(second.ratings.letterboxd !== null);
-  if (firstRatingCount !== secondRatingCount) return secondRatingCount - firstRatingCount;
 
   const firstProminence = movieProminence(first);
   const secondProminence = movieProminence(second);

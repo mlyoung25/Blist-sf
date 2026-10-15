@@ -52,7 +52,7 @@ function movie(id: string, overrides: Partial<Movie> = {}): Movie {
     genres: [],
     overview: null,
     posterUrl: null,
-    ratings: { imdb: 7, letterboxd: null },
+    ratings: { imdb: 7 },
     runs: [run()],
     ...overrides,
   };
@@ -82,15 +82,15 @@ test("sort categories prioritize one-day today, multi-day, then other-day movies
   assert.deepEqual(sortMovies([later, multi, today], "2026-10-15").map((item) => item.id), ["today", "multi", "later"]);
 });
 
-test("ratings sort descending within a category and normalize Letterboxd to ten points", () => {
-  const imdb = movie("IMDb 8", { ratings: { imdb: 8, letterboxd: null } });
-  const letterboxd = movie("Letterboxd 4.5", { ratings: { imdb: null, letterboxd: 4.5 } });
-  const unavailable = movie("Unavailable", { ratings: { imdb: null, letterboxd: null } });
+test("IMDb ratings sort descending within a category with unavailable ratings last", () => {
+  const high = movie("IMDb 9", { ratings: { imdb: 9 } });
+  const lower = movie("IMDb 8", { ratings: { imdb: 8 } });
+  const unavailable = movie("Unavailable", { ratings: { imdb: null } });
 
-  assert.equal(movieRatingScore(letterboxd), 9);
+  assert.equal(movieRatingScore(high), 9);
   assert.deepEqual(
-    sortMovies([unavailable, imdb, letterboxd], "2026-10-15").map((item) => item.id),
-    ["Letterboxd 4.5", "IMDb 8", "Unavailable"],
+    sortMovies([unavailable, lower, high], "2026-10-15").map((item) => item.id),
+    ["IMDb 9", "IMDb 8", "Unavailable"],
   );
 });
 
@@ -128,7 +128,7 @@ test("pins remain above the computed order", () => {
 
 test("global pins precede month-grouped movies with priorities confined to each month", () => {
   const octoberMulti = movie("October multi", {
-    ratings: { imdb: 5, letterboxd: null },
+    ratings: { imdb: 5 },
     runs: [run({
       startDate: "2026-10-20",
       endDate: "2026-11-03",
@@ -137,7 +137,7 @@ test("global pins precede month-grouped movies with priorities confined to each 
     })],
   });
   const octoberRated = movie("October rated", {
-    ratings: { imdb: 9, letterboxd: null },
+    ratings: { imdb: 9 },
     runs: [run({
       startDate: "2026-10-18",
       endDate: "2026-10-18",
@@ -145,7 +145,7 @@ test("global pins precede month-grouped movies with priorities confined to each 
     })],
   });
   const novemberPinned = movie("November pinned", {
-    ratings: { imdb: 1, letterboxd: null },
+    ratings: { imdb: 1 },
     runs: [run({
       startDate: "2026-11-20",
       endDate: "2026-11-20",
@@ -153,7 +153,7 @@ test("global pins precede month-grouped movies with priorities confined to each 
     })],
   });
   const novemberRated = movie("November rated", {
-    ratings: { imdb: 10, letterboxd: null },
+    ratings: { imdb: 10 },
     runs: [run({
       startDate: "2026-11-02",
       endDate: "2026-11-05",

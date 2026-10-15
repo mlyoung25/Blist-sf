@@ -114,7 +114,7 @@ test("the same movie becomes one card with complete theater runs", () => {
   assert.equal(movie.runs.length, 2);
   assert.deepEqual(
     { tmdbId: movie.tmdbId, imdbId: movie.imdbId, ratings: movie.ratings },
-    { tmdbId: 1, imdbId: "tt0000001", ratings: { imdb: 7.8, letterboxd: null } },
+    { tmdbId: 1, imdbId: "tt0000001", ratings: { imdb: 7.8 } },
   );
 
   const roxieRun = movie.runs.find((run) => run.venueId === "roxie");

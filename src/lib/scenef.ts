@@ -40,7 +40,6 @@ export type SceneFFilm = {
   posterUrl?: string;
   ratings?: {
     imdb?: number;
-    letterboxd?: number;
     tmdb?: number;
     rottenTomatoes?: number;
     metacritic?: number;
@@ -121,7 +120,6 @@ export type Movie = {
   posterUrl: string | null;
   ratings: {
     imdb: number | null;
-    letterboxd: number | null;
   };
   runs: TheaterRun[];
 };
@@ -330,7 +328,6 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             posterUrl: film.posterUrl ?? null,
             ratings: {
               imdb: film.ratings?.imdb ?? null,
-              letterboxd: film.ratings?.letterboxd ?? null,
             },
           },
           runs: new Map(),
@@ -344,9 +341,6 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         if (movieEntry.movie.imdbId === null && film.imdbId) movieEntry.movie.imdbId = film.imdbId;
         if (movieEntry.movie.ratings.imdb === null && film.ratings?.imdb !== undefined) {
           movieEntry.movie.ratings.imdb = film.ratings.imdb;
-        }
-        if (movieEntry.movie.ratings.letterboxd === null && film.ratings?.letterboxd !== undefined) {
-          movieEntry.movie.ratings.letterboxd = film.ratings.letterboxd;
         }
       }
 

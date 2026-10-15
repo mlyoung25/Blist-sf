@@ -27,27 +27,28 @@ in HD*, and *Exhibition on Screen* are excluded.
 
 ## Ratings, links, and ordering
 
-IMDb scores come directly from SceneF's full film metadata. SceneF currently publishes
-IMDb, TMDB, Rotten Tomatoes, and Metacritic fields, but no Letterboxd rating field; the
-UI therefore shows `Letterboxd unavailable` instead of guessing or scraping a score.
-Letterboxd film pages expose a weighted aggregate in JSON-LD and `twitter:data2`
-metadata (verified through a TMDB redirect on October 15, 2026), but Letterboxd's
-[Terms of Use](https://letterboxd.com/legal/terms-of-use/) prohibit automated
-data-gathering tools unless explicitly authorized. The supported
-[Letterboxd API](https://api-docs.letterboxd.com/) exposes weighted film ratings and
-accepts TMDB IDs, but requires OAuth client credentials; none are configured for this
-deployment, and an unauthenticated request returns HTTP 401. For that reason the app
-does not crawl film or search pages, including for title fallbacks. SceneF TMDB and
-IMDb IDs still drive direct IMDb, Letterboxd `/tmdb/{id}/`, and TMDB
-`/movie/{id}-{slug}/` links. Movies without an ID use an encoded search URL.
+Only verified IMDb scores from SceneF are currently displayed and used for sorting.
+Letterboxd and TMDB rating labels are hidden until supported API access is configured.
+SceneF TMDB and IMDb IDs still drive direct movie links where available, with encoded
+search links as fallbacks.
+
+### TODO
+
+- [ ] Apply for official Letterboxd API access at `api@letterboxd.com`, configure its
+  OAuth client credentials, and add cached, provenance-aware aggregate ratings.
+- [ ] Obtain an approved TMDB API key before adding TMDB ratings.
+
+The unofficial `letterboxd-client` package is a typed wrapper around Letterboxd's
+official endpoints; it still requires a Letterboxd-issued API key and secret and does
+not replace the access application.
 
 Pinned cards remain in a global section above the computed list. Unpinned cards group
 chronologically by the month of their earliest theater-run start date; a run crossing
 into another month remains in its start month. Within each month, cards use three
 deterministic categories: one-day runs showing today, multi-day runs, then remaining
-one-day runs on other dates. Within a category, the available IMDb/Letterboxd score
-sorts descending. Exact rating ties use, in order: number of theaters, number of
-showtimes, longest run, earliest run date, title, then stable movie ID.
+one-day runs on other dates. Within a category, the available IMDb score sorts
+descending. Exact rating ties use, in order: number of theaters, number of showtimes,
+longest run, earliest run date, title, then stable movie ID.
 
 The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
 browser extensions can inject attributes there before hydration. No app subtree uses

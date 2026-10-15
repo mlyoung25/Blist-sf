@@ -28,17 +28,12 @@ const multiDayCount = defaultPayload.movies.length - oneDayCount;
 const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0 && movie.tmdbId);
 const imdbRated = defaultPayload.movies.find((movie) => movie.ratings.imdb !== null);
 const imdbUnavailable = defaultPayload.movies.find((movie) => movie.ratings.imdb === null);
-const letterboxdRated = defaultPayload.movies.filter((movie) => movie.ratings.letterboxd !== null);
 assert.ok(multi);
 assert.ok(imdbRated);
 assert.ok(imdbUnavailable);
 
 function ratingScore(movie) {
-  const ratings = [
-    movie.ratings.imdb,
-    movie.ratings.letterboxd === null ? null : movie.ratings.letterboxd * 2,
-  ].filter((rating) => rating !== null);
-  return ratings.length === 0 ? null : ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  return movie.ratings.imdb;
 }
 
 function relativeLuminance([red, green, blue]) {
@@ -125,7 +120,8 @@ try {
   await ratedCard.getByText(`IMDb ${imdbRated.ratings.imdb.toFixed(1)}`, { exact: true }).waitFor();
   const unavailableCard = page.locator(`article[data-movie-id=${JSON.stringify(imdbUnavailable.id)}]`);
   await unavailableCard.getByText("IMDb unavailable", { exact: true }).waitFor();
-  assert.equal(await page.getByText("Letterboxd unavailable", { exact: true }).count(), defaultPayload.movies.length);
+  assert.equal(await page.getByText(/^Letterboxd (?:unavailable|\d)/).count(), 0);
+  assert.equal(await page.getByText("TMDB", { exact: true }).count(), 0);
 
   const theaterDetails = page.locator("details").first();
   await theaterDetails.locator("summary").click();
@@ -158,10 +154,6 @@ try {
   assert.equal(
     await multiCard.getByRole("link", { name: `${multi.title} on Letterboxd (opens in a new tab)` }).getAttribute("href"),
     `https://letterboxd.com/tmdb/${multi.tmdbId}/`,
-  );
-  assert.equal(
-    await multiCard.getByRole("link", { name: `${multi.title} on TMDB (opens in a new tab)` }).getAttribute("href"),
-    `https://www.themoviedb.org/movie/${multi.tmdbId}-${multi.normalizedTitle.replaceAll(" ", "-")}/`,
   );
   assert.equal(
     await multiCard.locator("a[target='_blank']").evaluateAll((links) => links.every((link) => link.querySelector("svg") !== null)),
@@ -262,7 +254,7 @@ try {
     monthDividersValidated: true,
     mobileCardWidth: Math.round(mobileCardBox.width),
     imdbRatingCoverage: defaultPayload.movies.filter((movie) => movie.ratings.imdb !== null).length,
-    letterboxdRatingCoverage: letterboxdRated.length,
+    letterboxdAndTmdbRatingsHidden: true,
     sortCategoriesVerified: true,
     externalLinkIconsVerified: true,
     hydrationErrors: hydrationErrors.length,
