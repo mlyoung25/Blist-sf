@@ -2,7 +2,16 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExternalLink, EyeOff, Pin, Search, X } from "lucide-react";
-import type { Movie, MoviesPayload, TheaterRun } from "@/lib/scenef";
+import { movieSortCategory, sortMovies } from "@/lib/movie-sort";
+import {
+  imdbMovieUrl,
+  letterboxdDirectorUrl,
+  letterboxdMovieUrl,
+  tmdbMovieUrl,
+  type Movie,
+  type MoviesPayload,
+  type TheaterRun,
+} from "@/lib/scenef";
 
 const PINNED_KEY = "blist-pinned-movies";
 const LEGACY_SAVED_KEY = "blist-saved-movies";
@@ -62,15 +71,6 @@ function needsConfirmation(run: TheaterRun) {
     ));
 }
 
-function letterboxdMovieUrl(movie: Movie) {
-  const query = `${movie.title}${movie.year ? ` ${movie.year}` : ""}`;
-  return `https://letterboxd.com/search/films/${encodeURIComponent(query)}/`;
-}
-
-function letterboxdDirectorUrl(director: string) {
-  return `https://letterboxd.com/search/${encodeURIComponent(director)}/`;
-}
-
 function loadStoredIds(key: string) {
   const stored = window.localStorage.getItem(key);
   if (!stored) return [];
@@ -127,8 +127,7 @@ export default function ShowtimesApp() {
   const visibleMovies = useMemo(() => {
     if (!payload) return [];
     const needle = query.trim().toLowerCase();
-    return payload.movies
-      .filter((movie) => {
+    const filtered = payload.movies.filter((movie) => {
         const matchesHidden = showAllHidden || !hidden.includes(movie.id);
         const matchesVenues = selectedVenues.length === 0
           || movie.runs.some((run) => selectedVenues.includes(run.venueId));
@@ -143,13 +142,8 @@ export default function ShowtimesApp() {
           movie.runs.map((run) => run.venueName).join(" "),
         ].join(" ").toLowerCase();
         return matchesHidden && matchesVenues && matchesRun && haystack.includes(needle);
-      })
-      .sort((first, second) => {
-        const pinDifference = Number(pinned.includes(second.id)) - Number(pinned.includes(first.id));
-        return pinDifference
-          || movieStartDate(first).localeCompare(movieStartDate(second))
-          || first.title.localeCompare(second.title);
       });
+    return sortMovies(filtered, payload.range.start, pinned);
   }, [hidden, payload, pinned, query, runFilter, selectedVenues, showAllHidden]);
 
   const selectedMovie = payload?.movies.find((movie) => movie.id === selectedMovieId) ?? null;
@@ -183,6 +177,7 @@ export default function ShowtimesApp() {
         key={movie.id}
         data-movie-id={movie.id}
         data-run-type={oneDay ? "one-day" : "multi-day"}
+        data-sort-category={movieSortCategory(movie, payload?.range.start ?? "")}
         className={`flex min-w-0 flex-col overflow-hidden rounded-lg border bg-zinc-900 ${
           oneDay ? "border-cyan-400/70 ring-1 ring-cyan-400/20" : "border-white/10"
         }`}
@@ -212,11 +207,51 @@ export default function ShowtimesApp() {
               </span>
             )}
           </div>
-          <div className="p-4 pb-2">
-            <h2 className="text-lg font-semibold leading-tight group-hover:text-white">{movie.title}</h2>
-            {movieDetails(movie) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(movie)}</p>}
-          </div>
         </button>
+
+        <div className="px-4 pb-2 pt-4">
+          <h2 className="text-lg font-semibold leading-tight">
+            <a
+              href={letterboxdMovieUrl(movie)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-start gap-1 hover:underline"
+              aria-label={`${movie.title} on Letterboxd (opens in a new tab)`}
+            >
+              {movie.title}<ExternalLink className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            </a>
+          </h2>
+          {movieDetails(movie) && <p className="mt-1 text-xs text-zinc-500">{movieDetails(movie)}</p>}
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <a
+              href={imdbMovieUrl(movie)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-zinc-300 hover:text-white hover:underline"
+              aria-label={`IMDb rating for ${movie.title}: ${movie.ratings.imdb?.toFixed(1) ?? "unavailable"} (opens in a new tab)`}
+            >
+              IMDb {movie.ratings.imdb?.toFixed(1) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
+            </a>
+            <a
+              href={letterboxdMovieUrl(movie)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-zinc-300 hover:text-white hover:underline"
+              aria-label={`Letterboxd rating for ${movie.title}: ${movie.ratings.letterboxd?.toFixed(2) ?? "unavailable"} (opens in a new tab)`}
+            >
+              Letterboxd {movie.ratings.letterboxd?.toFixed(2) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
+            </a>
+            <a
+              href={tmdbMovieUrl(movie)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-zinc-500 hover:text-white hover:underline"
+              aria-label={`${movie.title} on TMDB (opens in a new tab)`}
+            >
+              TMDB<ExternalLink className="size-3" aria-hidden="true" />
+            </a>
+          </div>
+        </div>
 
         <div className="flex flex-1 flex-col px-4 pb-4">
           <button onClick={() => setSelectedMovieId(movie.id)} className="text-left" aria-label={`View full run for ${movie.title}`}>
@@ -395,7 +430,15 @@ export default function ShowtimesApp() {
                       ? `SceneF currently lists through ${formatDate(source.latestListingDate, true)}`
                       : "SceneF currently lists no dates"}
                   {" · "}
-                  <a className="hover:text-zinc-300" href={source.sourceUrl} target="_blank" rel="noreferrer">SceneF source</a>
+                  <a
+                    className="inline-flex items-center gap-1 hover:text-zinc-300"
+                    href={source.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`${source.venueName} SceneF source (opens in a new tab)`}
+                  >
+                    SceneF source<ExternalLink className="size-3" aria-hidden="true" />
+                  </a>
                 </li>
               ))}
             </ul>
@@ -418,21 +461,62 @@ export default function ShowtimesApp() {
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
                 <h2 id="movie-dialog-title" className="text-2xl font-semibold">
-                  <a className="hover:underline" href={letterboxdMovieUrl(selectedMovie)} target="_blank" rel="noreferrer">
-                    {selectedMovie.title}<span className="sr-only"> on Letterboxd</span>
+                  <a
+                    className="inline-flex items-start gap-1 hover:underline"
+                    href={letterboxdMovieUrl(selectedMovie)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`${selectedMovie.title} on Letterboxd (opens in a new tab)`}
+                  >
+                    {selectedMovie.title}<ExternalLink className="mt-1 size-4 shrink-0" aria-hidden="true" />
                   </a>
                 </h2>
                 <div className="mt-1 flex flex-wrap items-center gap-x-1 text-sm text-zinc-500">
                   {selectedMovie.directors.map((director, index) => (
                     <Fragment key={director}>
                       {index > 0 && <span aria-hidden="true">,</span>}
-                      <a className="hover:text-white hover:underline" href={letterboxdDirectorUrl(director)} target="_blank" rel="noreferrer">
-                        {director}<span className="sr-only"> on Letterboxd</span>
+                      <a
+                        className="inline-flex items-center gap-1 hover:text-white hover:underline"
+                        href={letterboxdDirectorUrl(director)}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`${director} on Letterboxd (opens in a new tab)`}
+                      >
+                        {director}<ExternalLink className="size-3" aria-hidden="true" />
                       </a>
                     </Fragment>
                   ))}
                   {selectedMovie.directors.length > 0 && movieDetails(selectedMovie) && <span aria-hidden="true"> · </span>}
                   <span>{movieDetails(selectedMovie)}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-3 text-xs text-zinc-400">
+                  <a
+                    className="inline-flex items-center gap-1 hover:text-white hover:underline"
+                    href={letterboxdMovieUrl(selectedMovie)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`${selectedMovie.title} on Letterboxd (opens in a new tab)`}
+                  >
+                    Letterboxd {selectedMovie.ratings.letterboxd?.toFixed(2) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
+                  </a>
+                  <a
+                    className="inline-flex items-center gap-1 hover:text-white hover:underline"
+                    href={imdbMovieUrl(selectedMovie)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`${selectedMovie.title} on IMDb (opens in a new tab)`}
+                  >
+                    IMDb {selectedMovie.ratings.imdb?.toFixed(1) ?? "unavailable"}<ExternalLink className="size-3" aria-hidden="true" />
+                  </a>
+                  <a
+                    className="inline-flex items-center gap-1 hover:text-white hover:underline"
+                    href={tmdbMovieUrl(selectedMovie)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`${selectedMovie.title} on TMDB (opens in a new tab)`}
+                  >
+                    TMDB<ExternalLink className="size-3" aria-hidden="true" />
+                  </a>
                 </div>
               </div>
               <button className="rounded-md p-2 text-zinc-500 hover:bg-white/5 hover:text-white" onClick={() => setSelectedMovieId(null)} aria-label="Close movie details">
@@ -448,8 +532,14 @@ export default function ShowtimesApp() {
                   <div className={`flex flex-wrap items-baseline justify-between gap-2 border-b pb-2 ${
                     run.durationDays === 1 ? "border-cyan-400/50" : "border-white/10"
                   }`}>
-                    <a className="inline-flex items-center gap-1 font-medium hover:underline" href={run.websiteUrl} target="_blank" rel="noreferrer">
-                      {run.venueName}<ExternalLink className="size-3.5" />
+                    <a
+                      className="inline-flex items-center gap-1 font-medium hover:underline"
+                      href={run.websiteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`${run.venueName} website (opens in a new tab)`}
+                    >
+                      {run.venueName}<ExternalLink className="size-3.5" aria-hidden="true" />
                     </a>
                     <span className={run.durationDays === 1 ? "text-xs font-medium text-cyan-200" : "text-xs text-zinc-500"}>
                       {runSummary(run)}
@@ -473,7 +563,7 @@ export default function ShowtimesApp() {
                               rel="noreferrer"
                               className="rounded-md border border-white/15 px-2.5 py-1.5 text-xs font-medium hover:border-white/40 hover:bg-white hover:text-black"
                             >
-                              {showtime.label}
+                              {showtime.label}<ExternalLink className="ml-1 inline size-3" aria-hidden="true" />
                             </a>
                           ))}
                         </div>

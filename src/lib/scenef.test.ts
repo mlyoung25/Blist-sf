@@ -3,10 +3,13 @@ import test from "node:test";
 import {
   AMC_VENUES,
   excludeMoviesPlayingAtAmc,
+  imdbMovieUrl,
   isLikelyFilm,
+  letterboxdMovieUrl,
   normalizeFeeds,
   normalizeMovieTitle,
   titlesMatch,
+  tmdbMovieUrl,
   VENUES,
   type SceneFFilm,
   type SceneFFeed,
@@ -58,10 +61,13 @@ function venue(id: string) {
 
 const realFilm = {
   key: "tmdb-1",
+  tmdbId: 1,
+  imdbId: "tt0000001",
   title: "A Real Film",
   year: 2026,
   directors: ["A Director"],
   posterUrl: "https://image.tmdb.org/poster.jpg",
+  ratings: { imdb: 7.8 },
 };
 
 test("the default theater roster exactly matches the requested list without Castro", () => {
@@ -106,6 +112,10 @@ test("the same movie becomes one card with complete theater runs", () => {
   assert.ok(movie);
   assert.equal(payload.movies.filter((item) => item.title === "A Real Film").length, 1);
   assert.equal(movie.runs.length, 2);
+  assert.deepEqual(
+    { tmdbId: movie.tmdbId, imdbId: movie.imdbId, ratings: movie.ratings },
+    { tmdbId: 1, imdbId: "tt0000001", ratings: { imdb: 7.8, letterboxd: null } },
+  );
 
   const roxieRun = movie.runs.find((run) => run.venueId === "roxie");
   const balboaRun = movie.runs.find((run) => run.venueId === "balboa");
@@ -150,6 +160,18 @@ test("AMC filtering excludes the entire combined movie card by normalized title"
 
 test("AMC sources are exactly Kabuki and Metreon", () => {
   assert.deepEqual(AMC_VENUES.map((item) => item.id), ["amc-kabuki", "amc-metreon"]);
+});
+
+test("movie links use direct IDs with safe search fallbacks", () => {
+  const identified = { title: "A Real Film", year: 2026, tmdbId: 12345, imdbId: "tt12345" };
+  assert.equal(letterboxdMovieUrl(identified), "https://letterboxd.com/tmdb/12345/");
+  assert.equal(tmdbMovieUrl(identified), "https://www.themoviedb.org/movie/12345-a-real-film/");
+  assert.equal(imdbMovieUrl(identified), "https://www.imdb.com/title/tt12345/");
+
+  const unidentified = { title: "A Real Film", year: 2026, tmdbId: null, imdbId: null };
+  assert.match(letterboxdMovieUrl(unidentified), /^https:\/\/letterboxd\.com\/search\/films\//);
+  assert.match(tmdbMovieUrl(unidentified), /^https:\/\/www\.themoviedb\.org\/search\/movie\?/);
+  assert.match(imdbMovieUrl(unidentified), /^https:\/\/www\.imdb\.com\/find\/\?/);
 });
 
 test("non-film event labels and secret movies are excluded", () => {

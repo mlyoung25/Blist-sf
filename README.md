@@ -25,6 +25,25 @@ context prevent legitimate titles such as *They Live* and *Music* from being rem
 while explicit event-series prefixes such as *National Theatre Live*, *MET Opera Live
 in HD*, and *Exhibition on Screen* are excluded.
 
+## Ratings, links, and ordering
+
+IMDb scores come directly from SceneF's full film metadata. SceneF currently publishes
+IMDb, TMDB, Rotten Tomatoes, and Metacritic fields, but no Letterboxd rating field; the
+UI therefore shows `Letterboxd unavailable` instead of deriving or scraping a score.
+SceneF TMDB and IMDb IDs drive direct IMDb, Letterboxd `/tmdb/{id}/`, and TMDB
+`/movie/{id}-{slug}/` links. Movies without an ID use an encoded search URL.
+
+Unpinned cards sort deterministically in three categories: one-day runs showing today,
+multi-day runs, then remaining one-day runs on other dates. Within a category, the
+available IMDb/Letterboxd score sorts descending. Exact rating ties use, in order:
+number of theaters, number of showtimes, longest run, earliest run date, title, then
+stable movie ID. Pinned cards remain above this computed order.
+
+The root `<html>` uses React's narrow `suppressHydrationWarning` escape hatch because
+browser extensions can inject attributes there before hydration. No app subtree uses
+the suppression; production browser tests still fail on any app-generated hydration
+or page error.
+
 ## Data refresh schedule
 
 Vercel Cron calls `/api/refresh` at `00:00`, `11:00`, `12:00`, and `23:00` UTC.

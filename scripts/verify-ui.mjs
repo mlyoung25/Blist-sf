@@ -25,8 +25,21 @@ const defaultPayload = await defaultResponse.json();
 const allHiddenPayload = await allHiddenResponse.json();
 const oneDayCount = defaultPayload.movies.filter((movie) => movie.runs.every((run) => run.durationDays === 1)).length;
 const multiDayCount = defaultPayload.movies.length - oneDayCount;
-const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0);
+const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0 && movie.tmdbId);
+const imdbRated = defaultPayload.movies.find((movie) => movie.ratings.imdb !== null);
+const imdbUnavailable = defaultPayload.movies.find((movie) => movie.ratings.imdb === null);
+const letterboxdRated = defaultPayload.movies.filter((movie) => movie.ratings.letterboxd !== null);
 assert.ok(multi);
+assert.ok(imdbRated);
+assert.ok(imdbUnavailable);
+
+function ratingScore(movie) {
+  const ratings = [
+    movie.ratings.imdb,
+    movie.ratings.letterboxd === null ? null : movie.ratings.letterboxd * 2,
+  ].filter((rating) => rating !== null);
+  return ratings.length === 0 ? null : ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+}
 
 function relativeLuminance([red, green, blue]) {
   const channels = [red, green, blue].map((value) => {
@@ -49,18 +62,60 @@ function rgb(value) {
 const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(() => {
+    const inject = () => {
+      if (!document.documentElement) return false;
+      document.documentElement.setAttribute("data-extension-injected", "test");
+      return true;
+    };
+    if (!inject()) {
+      const observer = new MutationObserver(() => {
+        if (inject()) observer.disconnect();
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    }
+  });
   const page = await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle" });
 
   assert.equal(await page.locator("article").count(), defaultPayload.movies.length);
+  assert.equal(await page.locator("html").getAttribute("data-extension-injected"), "test");
   assert.equal(await page.getByLabel("Show all hidden").isChecked(), false);
   assert.equal(
-    await page.getByRole("heading", { name: defaultPayload.amcFilter.excludedTitles[0], exact: true }).count(),
+    await page.locator("h2").filter({ hasText: defaultPayload.amcFilter.excludedTitles[0] }).count(),
     0,
   );
   assert.equal(await page.getByText("Castro Theatre", { exact: true }).count(), 0);
+
+  const orderedIds = await page.locator("article").evaluateAll((articles) => articles.map((article) => ({
+    id: article.dataset.movieId,
+    category: article.dataset.sortCategory,
+  })));
+  const categoryRanks = { "one-day-today": 0, "multi-day": 1, "remaining": 2 };
+  assert.equal(orderedIds.every((item, index) => (
+    index === 0 || categoryRanks[orderedIds[index - 1].category] <= categoryRanks[item.category]
+  )), true);
+  const movieById = new Map(defaultPayload.movies.map((movie) => [movie.id, movie]));
+  assert.equal(orderedIds.every((item, index) => {
+    if (index === 0 || orderedIds[index - 1].category !== item.category) return true;
+    const previous = ratingScore(movieById.get(orderedIds[index - 1].id));
+    const current = ratingScore(movieById.get(item.id));
+    return previous === null || current === null || previous >= current;
+  }), true);
+
+  const ratedCard = page.locator(`article[data-movie-id=${JSON.stringify(imdbRated.id)}]`);
+  await ratedCard.getByText(`IMDb ${imdbRated.ratings.imdb.toFixed(1)}`, { exact: true }).waitFor();
+  const unavailableCard = page.locator(`article[data-movie-id=${JSON.stringify(imdbUnavailable.id)}]`);
+  await unavailableCard.getByText("IMDb unavailable", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Letterboxd unavailable", { exact: true }).count(), defaultPayload.movies.length);
 
   const theaterDetails = page.locator("details").first();
   await theaterDetails.locator("summary").click();
@@ -90,15 +145,34 @@ try {
   await page.getByLabel("Filter by run length").selectOption("all");
 
   const multiCard = page.locator(`article[data-movie-id=${JSON.stringify(multi.id)}]`);
+  assert.equal(
+    await multiCard.getByRole("link", { name: `${multi.title} on Letterboxd (opens in a new tab)` }).getAttribute("href"),
+    `https://letterboxd.com/tmdb/${multi.tmdbId}/`,
+  );
+  assert.equal(
+    await multiCard.getByRole("link", { name: `${multi.title} on TMDB (opens in a new tab)` }).getAttribute("href"),
+    `https://www.themoviedb.org/movie/${multi.tmdbId}-${multi.normalizedTitle.replaceAll(" ", "-")}/`,
+  );
+  assert.equal(
+    await multiCard.locator("a[target='_blank']").evaluateAll((links) => links.every((link) => link.querySelector("svg") !== null)),
+    true,
+  );
   await multiCard.getByRole("button", { name: `Open dates and showtimes for ${multi.title}` }).click();
   const dialog = page.getByRole("dialog");
-  const titleLink = dialog.getByRole("link", { name: `${multi.title} on Letterboxd` });
-  assert.ok((await titleLink.getAttribute("href")).startsWith("https://letterboxd.com/search/films/"));
-  const directorLink = dialog.getByRole("link", { name: `${multi.directors[0]} on Letterboxd` });
+  const titleLink = dialog.getByRole("link", { name: `${multi.title} on Letterboxd (opens in a new tab)` }).first();
+  assert.equal(await titleLink.getAttribute("href"), `https://letterboxd.com/tmdb/${multi.tmdbId}/`);
+  const directorLink = dialog.getByRole("link", { name: `${multi.directors[0]} on Letterboxd (opens in a new tab)` });
   assert.ok((await directorLink.getAttribute("href")).startsWith("https://letterboxd.com/search/"));
   for (const run of multi.runs) {
-    assert.equal(await dialog.getByRole("link", { name: run.venueName, exact: true }).getAttribute("href"), run.websiteUrl);
+    assert.equal(
+      await dialog.getByRole("link", { name: `${run.venueName} website (opens in a new tab)` }).getAttribute("href"),
+      run.websiteUrl,
+    );
   }
+  assert.equal(
+    await dialog.locator("a[target='_blank']").evaluateAll((links) => links.every((link) => link.querySelector("svg") !== null)),
+    true,
+  );
   await dialog.getByRole("button", { name: "Close movie details" }).click();
 
   const pinTarget = defaultPayload.movies.at(-1);
@@ -120,7 +194,7 @@ try {
   await page.getByText("Movies", { exact: false }).first().waitFor();
   await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).waitFor();
   assert.equal(await page.locator("article").count(), allHiddenPayload.movies.length);
-  assert.ok(await page.getByRole("heading", { name: defaultPayload.amcFilter.excludedTitles[0], exact: true }).count() > 0);
+  assert.ok(await page.locator("h2").filter({ hasText: defaultPayload.amcFilter.excludedTitles[0] }).count() > 0);
   await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).getByRole("button", { name: `Unhide ${hideTarget.title}` }).click();
   await page.locator(`article[data-movie-id=${JSON.stringify(pinTarget.id)}]`).getByRole("button", { name: `Unpin ${pinTarget.title}` }).click();
   await page.getByLabel("Show all hidden").uncheck();
@@ -149,11 +223,20 @@ try {
   assert.equal(unlabeledControls, 0);
 
   const mobile = await context.newPage();
+  mobile.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  mobile.on("pageerror", (error) => pageErrors.push(error.message));
   await mobile.setViewportSize({ width: 390, height: 844 });
   await mobile.goto(baseUrl, { waitUntil: "networkidle" });
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   const mobileCardBox = await mobile.locator("article").first().boundingBox();
   assert.ok(mobileCardBox && mobileCardBox.width > 340 && mobileCardBox.width < 390);
+
+  const hydrationErrors = consoleErrors.filter((message) => /hydration|did not match|server rendered/i.test(message));
+  assert.deepEqual(hydrationErrors, []);
+  assert.deepEqual(consoleErrors, []);
+  assert.deepEqual(pageErrors, []);
 
   console.log(JSON.stringify({
     defaultMovieCount: defaultPayload.movies.length,
@@ -167,6 +250,13 @@ try {
     theaterMultiselectUnionCount: unionCount,
     monthDividersValidated: true,
     mobileCardWidth: Math.round(mobileCardBox.width),
+    imdbRatingCoverage: defaultPayload.movies.filter((movie) => movie.ratings.imdb !== null).length,
+    letterboxdRatingCoverage: letterboxdRated.length,
+    sortCategoriesVerified: true,
+    externalLinkIconsVerified: true,
+    hydrationErrors: hydrationErrors.length,
+    consoleErrors: consoleErrors.length,
+    pageErrors: pageErrors.length,
   }, null, 2));
 } finally {
   await browser.close();

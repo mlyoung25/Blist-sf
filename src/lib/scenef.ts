@@ -28,6 +28,8 @@ export const AMC_VENUES: readonly VenueConfig[] = [
 
 export type SceneFFilm = {
   key: string;
+  tmdbId?: number;
+  imdbId?: string;
   title: string;
   year?: number;
   runtimeMin?: number;
@@ -36,6 +38,13 @@ export type SceneFFilm = {
   overview?: string;
   directors?: string[];
   posterUrl?: string;
+  ratings?: {
+    imdb?: number;
+    letterboxd?: number;
+    tmdb?: number;
+    rottenTomatoes?: number;
+    metacritic?: number;
+  };
 };
 
 type Freshness = {
@@ -99,6 +108,8 @@ export type TheaterRun = {
 
 export type Movie = {
   id: string;
+  tmdbId: number | null;
+  imdbId: string | null;
   title: string;
   normalizedTitle: string;
   directors: string[];
@@ -108,6 +119,10 @@ export type Movie = {
   genres: string[];
   overview: string | null;
   posterUrl: string | null;
+  ratings: {
+    imdb: number | null;
+    letterboxd: number | null;
+  };
   runs: TheaterRun[];
 };
 
@@ -164,6 +179,32 @@ export function normalizeMovieTitle(title: string) {
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+function movieSlug(title: string) {
+  return normalizeMovieTitle(title).replace(/\s+/g, "-") || "movie";
+}
+
+export function letterboxdMovieUrl(movie: Pick<Movie, "title" | "year" | "tmdbId">) {
+  if (movie.tmdbId !== null) return `https://letterboxd.com/tmdb/${movie.tmdbId}/`;
+  const query = `${movie.title}${movie.year ? ` ${movie.year}` : ""}`;
+  return `https://letterboxd.com/search/films/${encodeURIComponent(query)}/`;
+}
+
+export function tmdbMovieUrl(movie: Pick<Movie, "title" | "tmdbId">) {
+  if (movie.tmdbId !== null) {
+    return `https://www.themoviedb.org/movie/${movie.tmdbId}-${movieSlug(movie.title)}/`;
+  }
+  return `https://www.themoviedb.org/search/movie?query=${encodeURIComponent(movie.title)}`;
+}
+
+export function imdbMovieUrl(movie: Pick<Movie, "title" | "imdbId">) {
+  if (movie.imdbId) return `https://www.imdb.com/title/${movie.imdbId}/`;
+  return `https://www.imdb.com/find/?q=${encodeURIComponent(movie.title)}&s=tt`;
+}
+
+export function letterboxdDirectorUrl(director: string) {
+  return `https://letterboxd.com/search/${encodeURIComponent(director)}/`;
 }
 
 function titleMatchKeys(title: string) {
@@ -276,6 +317,8 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         movieEntry = {
           movie: {
             id: identity,
+            tmdbId: film.tmdbId ?? null,
+            imdbId: film.imdbId ?? null,
             title: film.title,
             normalizedTitle: normalizeMovieTitle(film.title),
             directors: film.directors ?? [],
@@ -285,6 +328,10 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
             genres: film.genres ?? [],
             overview: film.overview ?? null,
             posterUrl: film.posterUrl ?? null,
+            ratings: {
+              imdb: film.ratings?.imdb ?? null,
+              letterboxd: film.ratings?.letterboxd ?? null,
+            },
           },
           runs: new Map(),
         };
@@ -293,6 +340,14 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
         if (!movieEntry.movie.posterUrl && film.posterUrl) movieEntry.movie.posterUrl = film.posterUrl;
         if (!movieEntry.movie.overview && film.overview) movieEntry.movie.overview = film.overview;
         if (movieEntry.movie.directors.length === 0 && film.directors) movieEntry.movie.directors = film.directors;
+        if (movieEntry.movie.tmdbId === null && film.tmdbId) movieEntry.movie.tmdbId = film.tmdbId;
+        if (movieEntry.movie.imdbId === null && film.imdbId) movieEntry.movie.imdbId = film.imdbId;
+        if (movieEntry.movie.ratings.imdb === null && film.ratings?.imdb !== undefined) {
+          movieEntry.movie.ratings.imdb = film.ratings.imdb;
+        }
+        if (movieEntry.movie.ratings.letterboxd === null && film.ratings?.letterboxd !== undefined) {
+          movieEntry.movie.ratings.letterboxd = film.ratings.letterboxd;
+        }
       }
 
       let runEntry = movieEntry.runs.get(venue.id);
