@@ -8,7 +8,6 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-display: var(--font-instrument-serif);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -127,13 +126,14 @@
   }
   html {
     @apply font-sans;
+    color-scheme: dark;
     scroll-behavior: smooth;
   }
 }
 
 ::selection {
-  background: #ff4e2f;
-  color: white;
+  background: white;
+  color: black;
 }
 
 .no-scrollbar {

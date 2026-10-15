@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:data": "node --experimental-strip-types --test src/lib/scenef.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

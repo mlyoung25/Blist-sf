@@ -1,6 +1,12 @@
 # Reel Local
 
-A responsive Bay Area independent-cinema showtimes guide. Browse a curated schedule by date and venue, search films and directors, inspect screening details, and save films locally.
+A minimal San Francisco movie-showtimes guide. Listings are fetched from the public
+[SceneF API](https://scenef.com/agents), normalized on the server, and shown without
+synthetic fallback data.
+
+The calendar always exposes a 14-day window beginning with SceneF's `tonight_is.night`.
+Individual theaters may publish fewer than 14 days of schedules; the source status
+section reports the latest date SceneF currently provides for each theater.
 
 ## Run locally
 
@@ -15,6 +21,7 @@ Open the local URL printed by Next.js.
 
 ```bash
 npm run lint
+npm run test:data
 npm run build
 ```
 
