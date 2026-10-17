@@ -1,6 +1,6 @@
 import { revalidateTag } from "next/cache";
 import { fetchSceneFMovies, SCENEF_CACHE_TAG } from "@/lib/scenef";
-import { isScheduledRefreshTime, REFRESH_TIME_ZONE } from "@/lib/refresh-schedule";
+import { REFRESH_TIME_ZONE, VERCEL_CRON_UTC_TIME } from "@/lib/refresh-schedule";
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -13,19 +13,12 @@ export async function GET(request: Request) {
   }
 
   const now = new Date();
-  if (!isScheduledRefreshTime(now)) {
-    return Response.json({
-      refreshed: false,
-      reason: `Outside the 04:00/16:00 ${REFRESH_TIME_ZONE} refresh windows.`,
-      checkedAt: now.toISOString(),
-    });
-  }
-
   revalidateTag(SCENEF_CACHE_TAG, { expire: 0 });
   const payload = await fetchSceneFMovies({ excludeAmc: true });
 
   return Response.json({
     refreshed: true,
+    schedule: `${VERCEL_CRON_UTC_TIME} UTC daily (${REFRESH_TIME_ZONE}; 4:00 AM PST, 5:00 AM PDT)`,
     refreshedAt: now.toISOString(),
     dataAsOf: payload.dataAsOf,
     movieCountAfterAmcFilter: payload.movies.length,

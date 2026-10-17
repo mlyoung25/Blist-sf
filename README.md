@@ -94,13 +94,19 @@ or page error.
 
 ## Data refresh schedule
 
-Vercel Cron calls `/api/refresh` at `00:00`, `11:00`, `12:00`, and `23:00` UTC.
-The authenticated route refreshes only when that instant is **4:00 AM or 4:00 PM in
-`America/Los_Angeles`**, one hour after SceneF's documented 3:00 AM and 3:00 PM
-updates. The paired UTC candidates cover both PST and PDT; the IANA timezone guard
-rejects the extra call and handles daylight-saving transitions without manually
-changing the schedule. Configure `CRON_SECRET` in the deployment so Vercel sends
-`Authorization: Bearer <CRON_SECRET>`.
+Vercel Hobby allows one cron job per project, so `vercel.json` schedules a single
+daily call to `/api/refresh` at **`12:00 UTC`** (`0 12 * * *`). That maps to
+`America/Los_Angeles` as:
+
+| Offset | Local time at cron |
+| --- | --- |
+| PST (UTC−8) | **4:00 AM** |
+| PDT (UTC−7) | **5:00 AM** |
+
+A single UTC time cannot land on exactly 4:00 AM local year-round; **12:00 UTC** is
+the chosen anchor so standard-time mornings align with 4:00 AM Pacific. Configure
+`CRON_SECRET` in the deployment so Vercel sends `Authorization: Bearer <CRON_SECRET>`.
+The route refreshes on every authorized cron invocation (no secondary 4:00 PM window).
 
 The refresh invalidates the shared SceneF cache and prewarms all 10 theater sources,
 the On Film page, and both AMC comparison sources. SceneF's per-screening freshness,
