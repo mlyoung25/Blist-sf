@@ -29,6 +29,11 @@ export const AMC_VENUES: readonly VenueConfig[] = [
   { id: "amc-metreon", name: "AMC Metreon 16", isAmc: true },
 ] as const;
 
+/** Indie + AMC theaters exposed in the UI theater multiselect (alphabetical). */
+export const LISTING_VENUES: readonly VenueConfig[] = [...VENUES, ...AMC_VENUES].sort(
+  (first, second) => first.name.localeCompare(second.name),
+);
+
 export type SceneFFilm = {
   key: string;
   slug?: string;
@@ -178,6 +183,7 @@ export type MoviesPayload = {
     matchedMovieCount: number;
     error?: string;
   };
+  amcExcludedMovieIds: string[];
 };
 
 type FeedWithVenue = { venue: VenueConfig; feed: SceneFFeed };
@@ -546,7 +552,7 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
     attribution: "Showtimes via SceneF.com",
     dataAsOf,
     range: { start, end, days: calendarDays(start, end) },
-    venues: [...VENUES],
+    venues: [...LISTING_VENUES],
     movies,
     sources: statuses,
     amcFilter: {
@@ -570,10 +576,128 @@ export function normalizeFeeds(feeds: FeedWithVenue[]): MoviesPayload {
       fetchedAt: null,
       matchedMovieCount: movies.filter((movie) => movie.languages.length > 0).length,
     },
+    amcExcludedMovieIds: [],
   };
 }
 
-export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: FeedWithVenue[]): MoviesPayload {
+function appendScreeningToMovie(
+  movie: Movie,
+  venue: VenueConfig,
+  film: SceneFFilm,
+  screening: SceneFScreening,
+  horizonByVenue: ReadonlyMap<string, string | null>,
+) {
+  let run = movie.runs.find((entry) => entry.venueId === venue.id);
+  if (!run) {
+    run = {
+      venueId: venue.id,
+      venueName: venue.name,
+      sourceUrl: `${SCENEF_BASE_URL}/theater/${venue.id}`,
+      websiteUrl: venue.websiteUrl ?? `${SCENEF_BASE_URL}/theater/${venue.id}`,
+      startDate: screening.nightOf,
+      endDate: screening.nightOf,
+      durationDays: 1,
+      endsAtPublishedHorizon: horizonByVenue.get(venue.id) === screening.nightOf,
+      dates: [],
+      sourceTier: screening.source_tier ?? null,
+      confidence: screening.confidence ?? null,
+      verifiedAt: screening.verified_at ?? null,
+      freshness: screening.freshness ?? null,
+      note: screening.note ?? null,
+    };
+    movie.runs.push(run);
+  }
+
+  let dateEntry = run.dates.find((entry) => entry.date === screening.nightOf);
+  if (!dateEntry) {
+    dateEntry = { date: screening.nightOf, showtimes: [] };
+    run.dates.push(dateEntry);
+  }
+  if (!dateEntry.showtimes.some((showtime) => showtime.id === screening.id)) {
+    dateEntry.showtimes.push({
+      id: screening.id,
+      startsAt: screening.startsAt,
+      label: timeLabel(screening.startsAt),
+      ticketUrl: screening.ticketUrl,
+    });
+  }
+
+  if (!movie.posterUrl && film.posterUrl) movie.posterUrl = film.posterUrl;
+  if (!movie.overview && film.overview) movie.overview = film.overview;
+  if (movie.directors.length === 0 && film.directors) movie.directors = film.directors;
+  if (movie.languages.length === 0 && film.languages && film.languages.length > 0) {
+    movie.languages = film.languages;
+    movie.languageSource = {
+      provider: "SceneF",
+      sourceUrl: `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`,
+      field: "films[].languages",
+    };
+  }
+  if (movie.sceneFSlug === null && film.slug) movie.sceneFSlug = film.slug;
+  if (movie.tmdbId === null && film.tmdbId) movie.tmdbId = film.tmdbId;
+  if (movie.imdbId === null && film.imdbId) movie.imdbId = film.imdbId;
+  if (movie.ratings.imdb === null && film.ratings?.imdb !== undefined) {
+    movie.ratings.imdb = film.ratings.imdb;
+  }
+
+  run.dates.sort((first, second) => first.date.localeCompare(second.date));
+  for (const entry of run.dates) {
+    entry.showtimes.sort((first, second) => first.startsAt.localeCompare(second.startsAt));
+  }
+  run.startDate = run.dates[0]?.date ?? run.startDate;
+  run.endDate = run.dates.at(-1)?.date ?? run.endDate;
+  run.durationDays = calendarDays(run.startDate, run.endDate);
+  run.endsAtPublishedHorizon = horizonByVenue.get(venue.id) === run.endDate;
+  if (screening.freshness?.status !== "current") run.freshness = screening.freshness ?? null;
+  if (screening.confidence === "disputed") run.confidence = screening.confidence;
+  if (screening.note) run.note = screening.note;
+  if (screening.verified_at && (!run.verifiedAt || screening.verified_at > run.verifiedAt)) {
+    run.verifiedAt = screening.verified_at;
+  }
+}
+
+export function mergeAmcRunsIntoMovies(payload: MoviesPayload, amcFeeds: FeedWithVenue[]): MoviesPayload {
+  const movies = payload.movies.map((movie) => ({
+    ...movie,
+    runs: movie.runs.map((run) => ({
+      ...run,
+      dates: run.dates.map((date) => ({
+        ...date,
+        showtimes: [...date.showtimes],
+      })),
+    })),
+  }));
+  const horizonByVenue = new Map(
+    sourceStatus(amcFeeds).map((status) => [status.venueId, status.latestListingDate]),
+  );
+
+  for (const { venue, feed } of amcFeeds) {
+    const films = new Map(feed.films.map((film) => [film.key, film]));
+    for (const screening of feed.screenings) {
+      if (screening.nightOf < payload.range.start) continue;
+      const film = films.get(screening.filmKey);
+      if (!film || !isLikelyFilm(film, screening.tags)) continue;
+      const movie = movies.find((entry) => titlesMatch(entry.title, film.title));
+      if (!movie) continue;
+      appendScreeningToMovie(movie, venue, film, screening, horizonByVenue);
+    }
+  }
+
+  for (const movie of movies) {
+    movie.runs.sort((first, second) => first.startDate.localeCompare(second.startDate) || first.venueName.localeCompare(second.venueName));
+  }
+
+  return {
+    ...payload,
+    movies,
+    languageMetadata: {
+      ...payload.languageMetadata,
+      matchedMovieCount: movies.filter((movie) => movie.languages.length > 0).length,
+    },
+  };
+}
+
+export function computeAmcExcludedMovies(payload: MoviesPayload, amcFeeds: FeedWithVenue[]) {
   const amcTitles = new Set<string>();
   for (const { feed } of amcFeeds) {
     const films = new Map(feed.films.map((film) => [film.key, film]));
@@ -585,16 +709,31 @@ export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: Feed
     }
   }
 
-  const excluded: string[] = [];
-  const movies = payload.movies.filter((movie) => {
+  const excludedMovieIds: string[] = [];
+  const excludedTitles: string[] = [];
+  for (const movie of payload.movies) {
     const matches = [...titleMatchKeys(movie.title)].some((key) => amcTitles.has(key));
-    if (matches) excluded.push(movie.title);
-    return !matches;
-  });
+    if (matches) {
+      excludedMovieIds.push(movie.id);
+      excludedTitles.push(movie.title);
+    }
+  }
+
+  return {
+    excludedMovieIds,
+    excludedTitles: [...new Set(excludedTitles)].sort(),
+  };
+}
+
+export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: FeedWithVenue[]): MoviesPayload {
+  const { excludedMovieIds, excludedTitles } = computeAmcExcludedMovies(payload, amcFeeds);
+  const excludedIds = new Set(excludedMovieIds);
+  const movies = payload.movies.filter((movie) => !excludedIds.has(movie.id));
 
   return {
     ...payload,
     movies,
+    amcExcludedMovieIds: excludedMovieIds,
     onFilmSource: {
       ...payload.onFilmSource,
       matchedMovieCount: movies.filter((movie) => movie.onFilm.matched).length,
@@ -606,34 +745,54 @@ export function excludeMoviesPlayingAtAmc(payload: MoviesPayload, amcFeeds: Feed
     sources: [...payload.sources, ...sourceStatus(amcFeeds)].sort((first, second) => first.venueName.localeCompare(second.venueName)),
     amcFilter: {
       enabled: true,
-      excludedMovieCount: excluded.length,
-      excludedTitles: [...new Set(excluded)].sort(),
+      excludedMovieCount: excludedTitles.length,
+      excludedTitles,
       sourceUrls: AMC_VENUES.map((venue) => `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`),
     },
   };
 }
 
-async function fetchVenue(venue: VenueConfig): Promise<FeedWithVenue> {
+async function fetchAmcFeeds(
+  fetchVenueLive: (venue: VenueConfig) => Promise<FeedWithVenue>,
+): Promise<FeedWithVenue[]> {
+  const amcSettled = await Promise.allSettled(AMC_VENUES.map(fetchVenueLive));
+  const amcFailure = amcSettled.find((result) => result.status === "rejected");
+  if (amcFailure?.status === "rejected") {
+    const reason = amcFailure.reason instanceof Error ? amcFailure.reason.message : "unknown error";
+    throw new Error(`AMC showtimes are unavailable because a SceneF AMC source failed: ${reason}`);
+  }
+  return amcSettled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+}
+
+async function fetchVenue(venue: VenueConfig, fresh = false): Promise<FeedWithVenue> {
   const apiUrl = `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`;
   const response = await fetch(apiUrl, {
     headers: { Accept: "application/json" },
-    next: {
-      revalidate: 43_200,
-      tags: [SCENEF_CACHE_TAG, `scenef-venue-${venue.id}`],
-    },
+    ...(fresh
+      ? { cache: "no-store" as const }
+      : {
+          next: {
+            revalidate: 43_200,
+            tags: [SCENEF_CACHE_TAG, `scenef-venue-${venue.id}`],
+          },
+        }),
   });
 
   if (!response.ok) throw new Error(`SceneF ${venue.id} returned HTTP ${response.status}`);
   return { venue, feed: (await response.json()) as SceneFFeed };
 }
 
-async function fetchOnFilmMembership() {
+async function fetchOnFilmMembership(fresh = false) {
   const response = await fetch(SCENEF_ON_FILM_URL, {
     headers: { Accept: "text/html" },
-    next: {
-      revalidate: 43_200,
-      tags: [SCENEF_CACHE_TAG, "scenef-on-film"],
-    },
+    ...(fresh
+      ? { cache: "no-store" as const }
+      : {
+          next: {
+            revalidate: 43_200,
+            tags: [SCENEF_CACHE_TAG, "scenef-on-film"],
+          },
+        }),
   });
   if (!response.ok) throw new Error(`SceneF On Film returned HTTP ${response.status}`);
   const slugs = parseOnFilmSlugs(await response.text());
@@ -651,7 +810,7 @@ type WikidataBinding = {
   languageLabel?: { value?: string };
 };
 
-async function fetchVerifiedLanguages(movies: readonly Movie[]) {
+async function fetchVerifiedLanguages(movies: readonly Movie[], fresh = false) {
   const candidates = movies.filter((movie) => (
     movie.languages.length === 0 && (movie.tmdbId !== null || movie.imdbId !== null)
   ));
@@ -689,10 +848,14 @@ async function fetchVerifiedLanguages(movies: readonly Movie[]) {
         Accept: "application/sparql-results+json",
         "User-Agent": "Blist-sf/0.1 (https://github.com/mlyoung25/Blist-sf)",
       },
-      next: {
-        revalidate: 43_200,
-        tags: [SCENEF_CACHE_TAG, "wikidata-film-languages"],
-      },
+      ...(fresh
+        ? { cache: "no-store" as const }
+        : {
+            next: {
+              revalidate: 43_200,
+              tags: [SCENEF_CACHE_TAG, "wikidata-film-languages"],
+            },
+          }),
     });
     if (!response.ok) throw new Error(`Wikidata language query returned HTTP ${response.status}`);
     fetchedAt = response.headers.get("date") ?? fetchedAt;
@@ -722,13 +885,36 @@ async function fetchVerifiedLanguages(movies: readonly Movie[]) {
   return { records: [...records.values()], fetchedAt };
 }
 
-export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<MoviesPayload> {
-  const [settled, onFilmResult] = await Promise.all([
-    Promise.allSettled(VENUES.map(fetchVenue)),
-    fetchOnFilmMembership().then(
+export function isAmcVenueId(venueId: string): boolean {
+  return AMC_VENUES.some((venue) => venue.id === venueId);
+}
+
+export function displayRunsForMovie(
+  movie: Movie,
+  options: { showAllHidden: boolean; amcVenueSelected: boolean },
+): TheaterRun[] {
+  if (options.showAllHidden || options.amcVenueSelected) return movie.runs;
+  return movie.runs.filter((run) => !isAmcVenueId(run.venueId));
+}
+
+export function shouldHideAmcLinkedMovie(
+  movie: Movie,
+  payload: MoviesPayload,
+  options: { showAllHidden: boolean; amcVenueSelected: boolean },
+): boolean {
+  if (options.showAllHidden || options.amcVenueSelected) return false;
+  return payload.amcExcludedMovieIds.includes(movie.id);
+}
+
+export async function fetchSceneFMovies({ fresh = false } = {}): Promise<MoviesPayload> {
+  const fetchVenueLive = (venue: VenueConfig) => fetchVenue(venue, fresh);
+  const [settled, onFilmResult, amcFeeds] = await Promise.all([
+    Promise.allSettled(VENUES.map(fetchVenueLive)),
+    fetchOnFilmMembership(fresh).then(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
     ),
+    fetchAmcFeeds(fetchVenueLive),
   ]);
   const feeds = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   if (feeds.length === 0) throw new Error("Every SceneF theater request failed.");
@@ -744,7 +930,7 @@ export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<Mo
         },
       };
   try {
-    const languageResult = await fetchVerifiedLanguages(payload.movies);
+    const languageResult = await fetchVerifiedLanguages(payload.movies, fresh);
     payload = applyVerifiedLanguages(payload, languageResult.records, languageResult.fetchedAt);
   } catch (error) {
     payload = {
@@ -772,15 +958,19 @@ export async function fetchSceneFMovies({ excludeAmc = false } = {}): Promise<Mo
     sources: [...payload.sources, ...failedSources].sort((first, second) => first.venueName.localeCompare(second.venueName)),
   };
 
-  if (!excludeAmc) return completePayload;
-
-  const amcSettled = await Promise.allSettled(AMC_VENUES.map(fetchVenue));
-  const amcFailure = amcSettled.find((result) => result.status === "rejected");
-  if (amcFailure?.status === "rejected") {
-    const reason = amcFailure.reason instanceof Error ? amcFailure.reason.message : "unknown error";
-    throw new Error(`AMC title filtering is unavailable because a SceneF AMC source failed: ${reason}`);
-  }
-
-  const amcFeeds = amcSettled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  return excludeMoviesPlayingAtAmc(completePayload, amcFeeds);
+  const mergedPayload = mergeAmcRunsIntoMovies(completePayload, amcFeeds);
+  const { excludedMovieIds, excludedTitles } = computeAmcExcludedMovies(mergedPayload, amcFeeds);
+  return {
+    ...mergedPayload,
+    sources: [...mergedPayload.sources, ...sourceStatus(amcFeeds)].sort((first, second) => (
+      first.venueName.localeCompare(second.venueName)
+    )),
+    amcExcludedMovieIds: excludedMovieIds,
+    amcFilter: {
+      enabled: true,
+      excludedMovieCount: excludedTitles.length,
+      excludedTitles,
+      sourceUrls: AMC_VENUES.map((venue) => `${SCENEF_BASE_URL}/api/listings?region=sf&venue=${venue.id}`),
+    },
+  };
 }

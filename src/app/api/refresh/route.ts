@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
   const now = new Date();
   revalidateTag(SCENEF_CACHE_TAG, { expire: 0 });
-  const payload = await fetchSceneFMovies({ excludeAmc: true });
+  const payload = await fetchSceneFMovies({ fresh: true });
 
   return Response.json({
     refreshed: true,

@@ -4,9 +4,12 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ExternalLink, EyeOff, Pin, Search, X } from "lucide-react";
 import { movieStartDate, movieStartMonth, sortMovies } from "@/lib/movie-sort";
 import {
+  displayRunsForMovie,
   imdbMovieUrl,
+  isAmcVenueId,
   letterboxdDirectorUrl,
   letterboxdMovieUrl,
+  shouldHideAmcLinkedMovie,
   type Movie,
   type MoviesPayload,
   type TheaterRun,
@@ -54,8 +57,8 @@ function runSummary(run: TheaterRun) {
   return `${run.venueName}: ${dates} · ${duration}${run.endsAtPublishedHorizon ? "…" : ""}`;
 }
 
-function isOneDayMovie(movie: Movie) {
-  return movie.runs.every((run) => run.durationDays === 1);
+function isOneDayMovie(runs: TheaterRun[]) {
+  return runs.length > 0 && runs.every((run) => run.durationDays === 1);
 }
 
 function needsConfirmation(run: TheaterRun) {
@@ -105,7 +108,7 @@ export default function ShowtimesApp() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/showtimes${showAllHidden ? "?showAllHidden=1" : ""}`, { signal: controller.signal })
+    fetch("/api/showtimes", { signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as MoviesPayload | { error?: string };
         if (!response.ok || !("movies" in data)) {
@@ -121,29 +124,38 @@ export default function ShowtimesApp() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [showAllHidden]);
+  }, []);
+
+  const amcVenueSelected = selectedVenues.some((venueId) => isAmcVenueId(venueId));
+  const displayOptions = useMemo(
+    () => ({ showAllHidden, amcVenueSelected }),
+    [amcVenueSelected, showAllHidden],
+  );
 
   const visibleMovies = useMemo(() => {
     if (!payload) return [];
     const needle = query.trim().toLowerCase();
     const filtered = payload.movies.filter((movie) => {
+        if (shouldHideAmcLinkedMovie(movie, payload, displayOptions)) return false;
+        const runs = displayRunsForMovie(movie, displayOptions);
+        if (runs.length === 0) return false;
         const matchesHidden = showAllHidden || !hidden.includes(movie.id);
         const matchesVenues = selectedVenues.length === 0
-          || movie.runs.some((run) => selectedVenues.includes(run.venueId));
-        const oneDay = isOneDayMovie(movie);
+          || runs.some((run) => selectedVenues.includes(run.venueId));
+        const oneDay = isOneDayMovie(runs);
         const matchesRun = !oneDayOnly || oneDay;
         const matchesDate = selectedDate === null
-          || movie.runs.some((run) => run.dates.some((date) => date.date === selectedDate));
+          || runs.some((run) => run.dates.some((date) => date.date === selectedDate));
         const matchesOnFilm = !onFilmOnly || movie.onFilm.matched;
         const haystack = [
           movie.title,
           movie.genres.join(" "),
-          movie.runs.map((run) => run.venueName).join(" "),
+          runs.map((run) => run.venueName).join(" "),
         ].join(" ").toLowerCase();
         return matchesHidden && matchesVenues && matchesRun && matchesDate && matchesOnFilm && haystack.includes(needle);
       });
     return sortMovies(filtered, selectedDate, pinned);
-  }, [hidden, onFilmOnly, oneDayOnly, payload, pinned, query, selectedDate, selectedVenues, showAllHidden]);
+  }, [displayOptions, hidden, onFilmOnly, oneDayOnly, payload, pinned, query, selectedDate, selectedVenues, showAllHidden]);
 
   const availableDates = useMemo(() => {
     if (!payload) return [];
@@ -153,6 +165,7 @@ export default function ShowtimesApp() {
   }, [payload]);
 
   const selectedMovie = payload?.movies.find((movie) => movie.id === selectedMovieId) ?? null;
+  const selectedMovieRuns = selectedMovie ? displayRunsForMovie(selectedMovie, displayOptions) : [];
   const pinnedMovies = visibleMovies.filter((movie) => pinned.includes(movie.id));
   const unpinnedMovies = visibleMovies.filter((movie) => !pinned.includes(movie.id));
 
@@ -175,7 +188,8 @@ export default function ShowtimesApp() {
   };
 
   const renderCard = (movie: Movie) => {
-    const oneDay = isOneDayMovie(movie);
+    const runs = displayRunsForMovie(movie, displayOptions);
+    const oneDay = isOneDayMovie(runs);
     const isPinned = pinned.includes(movie.id);
     const isHidden = hidden.includes(movie.id);
     return (
@@ -257,7 +271,7 @@ export default function ShowtimesApp() {
         <div className="flex flex-1 flex-col px-4 pb-4">
           <button onClick={() => setSelectedMovieId(movie.id)} className="text-left" aria-label={`View full run for ${movie.title}`}>
             <ul className="space-y-1.5 text-xs leading-5 text-zinc-400">
-              {movie.runs.map((run) => (
+              {runs.map((run) => (
                 <li key={run.venueId} className={run.durationDays === 1 ? "font-medium text-blue-200" : ""}>
                   {runSummary(run)}
                 </li>
@@ -430,7 +444,7 @@ export default function ShowtimesApp() {
 
         {loading && (
           <div className="py-20 text-center text-sm text-zinc-500">
-            {showAllHidden ? "Loading hidden movies…" : "Loading live movies from SceneF…"}
+            Loading live movies from SceneF…
           </div>
         )}
 
@@ -593,7 +607,7 @@ export default function ShowtimesApp() {
             {selectedMovie.overview && <p className="mt-5 text-sm leading-6 text-zinc-300">{selectedMovie.overview}</p>}
 
             <div className="mt-6 space-y-6">
-              {selectedMovie.runs.map((run) => (
+              {selectedMovieRuns.map((run) => (
                 <section key={run.venueId}>
                   <div className={`flex flex-wrap items-baseline justify-between gap-2 border-b pb-2 ${
                     run.durationDays === 1 ? "border-cyan-400/50" : "border-white/10"
