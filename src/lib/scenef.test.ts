@@ -8,6 +8,7 @@ import {
   imdbMovieUrl,
   isLikelyFilm,
   letterboxdMovieUrl,
+  LISTING_VENUES,
   normalizeFeeds,
   normalizeMovieTitle,
   parseOnFilmSlugs,
@@ -76,6 +77,29 @@ const realFilm = {
   posterUrl: "https://image.tmdb.org/poster.jpg",
   ratings: { imdb: 7.8 },
 };
+
+test("listing venues include indie theaters plus AMC Kabuki and Metreon", () => {
+  assert.deepEqual(LISTING_VENUES.map((item) => item.name), [
+    "4 Star Theatre",
+    "Alamo Drafthouse",
+    "AMC Kabuki 8",
+    "AMC Metreon 16",
+    "Apple Cinemas Van Ness IMAX",
+    "Balboa Theatre",
+    "Landmark Opera Plaza Cinema",
+    "Marina Theatre",
+    "Presidio Theatre",
+    "Regal Stonestown Galleria 12",
+    "Roxie Theatre",
+    "Vogue Theatre",
+  ]);
+  const roxie = venue("roxie");
+  const payload = normalizeFeeds([{
+    venue: roxie,
+    feed: feed("roxie", [realFilm], [screening("roxie-1", "tmdb-1", "roxie", "2026-10-15")]),
+  }]);
+  assert.deepEqual(payload.venues.map((item) => item.id), LISTING_VENUES.map((item) => item.id));
+});
 
 test("the default theater roster exactly matches the requested list without Castro", () => {
   assert.deepEqual(VENUES.map((item) => item.name), REQUIRED_THEATERS);
