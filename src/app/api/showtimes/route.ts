@@ -1,8 +1,8 @@
 import { fetchSceneFMovies } from "@/lib/scenef";
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const payload = await fetchSceneFMovies({ fresh: true });
+    const payload = await fetchSceneFMovies();
     return Response.json(payload, {
       headers: {
         "Cache-Control": "no-store",
