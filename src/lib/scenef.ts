@@ -188,7 +188,7 @@ export type MoviesPayload = {
 
 type FeedWithVenue = { venue: VenueConfig; feed: SceneFFeed };
 
-function calendarDays(start: string, end: string) {
+export function calendarDays(start: string, end: string) {
   const first = new Date(`${start}T12:00:00Z`);
   const last = new Date(`${end}T12:00:00Z`);
   return Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;

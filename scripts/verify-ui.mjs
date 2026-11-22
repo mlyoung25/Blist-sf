@@ -5,6 +5,8 @@ const baseUrl = process.env.BASE_URL ?? "http://127.0.0.1:43127";
 const requiredTheaters = [
   "4 Star Theatre",
   "Alamo Drafthouse",
+  "AMC Kabuki 8",
+  "AMC Metreon 16",
   "Apple Cinemas Van Ness IMAX",
   "Balboa Theatre",
   "Landmark Opera Plaza Cinema",
@@ -15,29 +17,55 @@ const requiredTheaters = [
   "Vogue Theatre",
 ];
 
-const [defaultResponse, allHiddenResponse] = await Promise.all([
-  fetch(`${baseUrl}/api/showtimes`),
-  fetch(`${baseUrl}/api/showtimes?showAllHidden=1`),
-]);
+function isAmcVenueId(id) {
+  return id === "amc-kabuki" || id === "amc-metreon";
+}
+
+function displayMovie(movie, payload, showAllHidden) {
+  if (!showAllHidden && payload.amcExcludedMovieIds.includes(movie.id)) return null;
+  const runs = showAllHidden ? movie.runs : movie.runs.filter((run) => !isAmcVenueId(run.venueId));
+  if (runs.length === 0) return null;
+  return { ...movie, runs };
+}
+
+function displayMovies(payload, showAllHidden) {
+  return payload.movies.flatMap((movie) => {
+    const next = displayMovie(movie, payload, showAllHidden);
+    return next ? [next] : [];
+  });
+}
+
+const defaultResponse = await fetch(`${baseUrl}/api/showtimes`);
+const queryResponse = await fetch(`${baseUrl}/api/showtimes?showAllHidden=1`);
 assert.equal(defaultResponse.ok, true);
-assert.equal(allHiddenResponse.ok, true);
+assert.equal(queryResponse.ok, true);
+assert.ok(defaultResponse.headers.get("x-listing-stored-at"));
 const defaultPayload = await defaultResponse.json();
-const allHiddenPayload = await allHiddenResponse.json();
-const oneDayCount = defaultPayload.movies.filter((movie) => movie.runs.every((run) => run.durationDays === 1)).length;
-const multiDayCount = defaultPayload.movies.length - oneDayCount;
-const multi = defaultPayload.movies.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0 && movie.tmdbId);
-const imdbRated = defaultPayload.movies.find((movie) => movie.ratings.imdb !== null);
-const imdbUnavailable = defaultPayload.movies.find((movie) => movie.ratings.imdb === null);
-const onFilmMovies = defaultPayload.movies.filter((movie) => movie.onFilm.matched);
+const queryPayload = await queryResponse.json();
+assert.deepEqual(queryPayload.movies.map((movie) => movie.id), defaultPayload.movies.map((movie) => movie.id));
+const visibleDefault = displayMovies(defaultPayload, false);
+const visibleAllHidden = displayMovies(defaultPayload, true);
+assert.ok(visibleAllHidden.length >= visibleDefault.length);
+const oneDayCount = visibleDefault.filter((movie) => movie.runs.every((run) => run.durationDays === 1)).length;
+const multiDayCount = visibleDefault.length - oneDayCount;
+const multi = visibleDefault.find((movie) => movie.runs.length > 1 && movie.posterUrl && movie.directors.length > 0 && movie.tmdbId);
+const imdbRated = visibleDefault.find((movie) => movie.ratings.imdb !== null);
+const imdbUnavailable = visibleDefault.find((movie) => movie.ratings.imdb === null);
+const onFilmMovies = visibleDefault.filter((movie) => movie.onFilm.matched);
 const isOneDay = (movie) => movie.runs.every((run) => run.durationDays === 1);
-const oneDayOnlyMovie = defaultPayload.movies.find((movie) => isOneDay(movie) && !movie.onFilm.matched);
-const dualBorderMovie = defaultPayload.movies.find((movie) => isOneDay(movie) && movie.onFilm.matched);
-const onFilmOnlyMovie = allHiddenPayload.movies.find((movie) => !isOneDay(movie) && movie.onFilm.matched);
-const neutralMovie = defaultPayload.movies.find((movie) => !isOneDay(movie) && !movie.onFilm.matched);
-const unknownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length === 0);
-const knownLanguageMovie = defaultPayload.movies.find((movie) => movie.languages.length > 0);
+const oneDayOnlyMovie = visibleDefault.find((movie) => isOneDay(movie) && !movie.onFilm.matched);
+const dualBorderMovie = visibleDefault.find((movie) => isOneDay(movie) && movie.onFilm.matched);
+const onFilmOnlyMovie = visibleAllHidden.find((movie) => !isOneDay(movie) && movie.onFilm.matched);
+const neutralMovie = visibleDefault.find((movie) => !isOneDay(movie) && !movie.onFilm.matched);
+const unknownLanguageMovie = visibleDefault.find((movie) => movie.languages.length === 0);
+const knownLanguageMovie = visibleDefault.find((movie) => movie.languages.length > 0);
 const languageCoverage = defaultPayload.movies.filter((movie) => movie.languages.length > 0).length;
-const directorSearchTarget = defaultPayload.movies.find((movie) => movie.directors.some((director) => {
+const combinedAmcMovie = defaultPayload.movies.find((movie) => (
+  defaultPayload.amcExcludedMovieIds.includes(movie.id)
+  && movie.runs.some((run) => !isAmcVenueId(run.venueId))
+  && movie.runs.some((run) => isAmcVenueId(run.venueId))
+));
+const directorSearchTarget = visibleDefault.find((movie) => movie.directors.some((director) => {
   const searchableWithoutDirectors = [
     movie.title,
     movie.genres.join(" "),
@@ -60,7 +88,10 @@ assert.ok(unknownLanguageMovie);
 assert.ok(knownLanguageMovie);
 assert.ok(directorSearchTarget);
 assert.equal(defaultPayload.onFilmSource.error, undefined);
-assert.equal(defaultPayload.onFilmSource.matchedMovieCount, onFilmMovies.length);
+assert.equal(
+  defaultPayload.onFilmSource.matchedMovieCount,
+  defaultPayload.movies.filter((movie) => movie.onFilm.matched).length,
+);
 assert.equal(onFilmMovies.every((movie) => movie.onFilm.sourceUrl === "https://scenef.com/on-film"), true);
 assert.equal(defaultPayload.languageMetadata.error, undefined);
 assert.equal(defaultPayload.languageMetadata.field, "P364 (original language of film)");
@@ -159,15 +190,22 @@ try {
   const page = await context.newPage();
   const consoleErrors = [];
   const pageErrors = [];
+  const showtimesRequests = [];
+  const sceneFBrowserRequests = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("/api/showtimes")) showtimesRequests.push(url);
+    if (url.includes("scenef.com")) sceneFBrowserRequests.push(url);
+  });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "networkidle" });
 
-  assert.equal(await page.locator("article").count(), defaultPayload.movies.length);
+  assert.equal(await page.locator("article").count(), visibleDefault.length);
   assert.equal(await page.locator("html").getAttribute("data-extension-injected"), "test");
   assert.equal(await page.getByLabel("Show all hidden").isChecked(), false);
   assert.equal(
@@ -177,7 +215,7 @@ try {
   assert.equal(await page.getByText("Castro Theatre", { exact: true }).count(), 0);
 
   const orderedIds = await page.locator("article").evaluateAll((articles) => articles.map((article) => article.dataset.movieId));
-  const movieById = new Map(defaultPayload.movies.map((movie) => [movie.id, movie]));
+  const movieById = new Map(visibleDefault.map((movie) => [movie.id, movie]));
   const startMonth = (id) => movieById.get(id).runs.map((run) => run.startDate).sort()[0].slice(0, 7);
   assert.equal(orderedIds.every((id, index) => (
     index === 0 || startMonth(orderedIds[index - 1]) <= startMonth(id)
@@ -302,8 +340,10 @@ try {
     borderAndControlColors[2],
   );
 
+  const showtimesBeforeReveal = showtimesRequests.length;
   await page.getByLabel("Show all hidden").check();
   await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).waitFor();
+  assert.equal(showtimesRequests.length, showtimesBeforeReveal);
   const onFilmOnlyClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}]`).getAttribute("class");
   const onFilmOnlyFrameClass = await page.locator(`article[data-movie-id=${JSON.stringify(onFilmOnlyMovie.id)}] [data-card-frame]`).getAttribute("class");
   assert.match(onFilmOnlyFrameClass, /border-yellow-400/);
@@ -322,15 +362,15 @@ try {
   assert.equal(await dateNav.getByRole("button", { name: "All dates" }).getAttribute("aria-pressed"), "true");
   assert.equal(await dateNav.getByRole("button").count(), availableDates.length + 1);
   const selectedTestDate = availableDates.find((date) => {
-    const count = defaultPayload.movies.filter((movie) => (
+    const count = visibleDefault.filter((movie) => (
       movie.runs.some((run) => run.dates.some((item) => item.date === date))
     )).length;
-    return count > 0 && count < defaultPayload.movies.length;
+    return count > 0 && count < visibleDefault.length;
   });
   assert.ok(selectedTestDate);
   const selectedDateButton = dateNav.getByRole("button", { name: `Show movies playing ${formatDate(selectedTestDate, true)}` });
   await selectedDateButton.click();
-  const selectedDateCount = defaultPayload.movies.filter((movie) => (
+  const selectedDateCount = visibleDefault.filter((movie) => (
     movie.runs.some((run) => run.dates.some((item) => item.date === selectedTestDate))
   )).length;
   assert.equal(await page.locator("article").count(), selectedDateCount);
@@ -358,7 +398,7 @@ try {
   await theaterDetails.getByLabel(requiredTheaters[0]).check();
   await theaterDetails.getByLabel(requiredTheaters[1]).check();
   const selectedIds = defaultPayload.venues.slice(0, 2).map((venue) => venue.id);
-  const unionCount = defaultPayload.movies.filter((movie) => movie.runs.some((run) => selectedIds.includes(run.venueId))).length;
+  const unionCount = visibleDefault.filter((movie) => movie.runs.some((run) => selectedIds.includes(run.venueId))).length;
   assert.equal(await page.locator("article").count(), unionCount);
   await theaterDetails.getByRole("button", { name: "Clear" }).click();
   await theaterDetails.locator("summary").click();
@@ -374,7 +414,7 @@ try {
   assert.equal(await page.locator("article").getByText("One-day event", { exact: true }).count(), 0);
   await oneDayCheckbox.uncheck();
   assert.equal(await oneDayCheckbox.isChecked(), false);
-  assert.equal(await page.locator("article").count(), defaultPayload.movies.length);
+  assert.equal(await page.locator("article").count(), visibleDefault.length);
 
   const multiCard = page.locator(`article[data-movie-id=${JSON.stringify(multi.id)}]`);
   assert.equal(
@@ -407,7 +447,7 @@ try {
   );
   await dialog.getByRole("button", { name: "Close movie details" }).click();
 
-  const pinTarget = defaultPayload.movies.at(-1);
+  const pinTarget = visibleDefault.at(-1);
   const pinCard = page.locator(`article[data-movie-id=${JSON.stringify(pinTarget.id)}]`);
   await pinCard.getByRole("button", { name: `Pin ${pinTarget.title}` }).click();
   assert.equal(await page.locator("article").first().getAttribute("data-movie-id"), pinTarget.id);
@@ -416,18 +456,29 @@ try {
   assert.equal(await page.locator("article").first().getAttribute("data-movie-id"), pinTarget.id);
   assert.equal(await page.locator("[data-divider='pinned']").count(), 1);
 
-  const hideTarget = defaultPayload.movies.find((movie) => movie.id !== pinTarget.id);
+  const hideTarget = visibleDefault.find((movie) => movie.id !== pinTarget.id);
   const hideCard = page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`);
   await hideCard.getByRole("button", { name: `Hide ${hideTarget.title}` }).click();
   assert.equal(await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).count(), 0);
   await page.reload({ waitUntil: "networkidle" });
   assert.equal(await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).count(), 0);
 
+  const showtimesBeforeHideReveal = showtimesRequests.length;
   await page.getByLabel("Show all hidden").check();
   await page.getByText("Movies", { exact: false }).first().waitFor();
   await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).waitFor();
-  assert.equal(await page.locator("article").count(), allHiddenPayload.movies.length);
+  assert.equal(showtimesRequests.length, showtimesBeforeHideReveal);
+  assert.equal(await page.locator("article").count(), visibleAllHidden.length);
   assert.ok(await page.locator("h2").filter({ hasText: defaultPayload.amcFilter.excludedTitles[0] }).count() > 0);
+  assert.ok(combinedAmcMovie);
+  const revealedAmcCard = page.locator(`article[data-movie-id=${JSON.stringify(combinedAmcMovie.id)}]`);
+  await revealedAmcCard.waitFor();
+  const amcRun = combinedAmcMovie.runs.find((run) => isAmcVenueId(run.venueId));
+  assert.ok(amcRun);
+  await revealedAmcCard.getByText(amcRun.venueName, { exact: false }).waitFor();
+  await revealedAmcCard.getByRole("button", { name: `Open dates and showtimes for ${combinedAmcMovie.title}` }).click();
+  await page.getByRole("dialog").getByRole("link", { name: `${amcRun.venueName} website (opens in a new tab)` }).waitFor();
+  await page.getByRole("dialog").getByRole("button", { name: "Close movie details" }).click();
   await page.locator(`article[data-movie-id=${JSON.stringify(hideTarget.id)}]`).getByRole("button", { name: `Unhide ${hideTarget.title}` }).click();
   await page.locator(`article[data-movie-id=${JSON.stringify(pinTarget.id)}]`).getByRole("button", { name: `Unpin ${pinTarget.title}` }).click();
   await page.getByLabel("Show all hidden").uncheck();
@@ -445,7 +496,7 @@ try {
       }
     }
     return true;
-  }, defaultPayload.movies);
+  }, visibleDefault);
   assert.equal(monthValidation, true);
 
   const unlabeledControls = await page.locator("button,input,select,a").evaluateAll((elements) => elements.filter((element) => {
@@ -541,9 +592,12 @@ try {
   assert.deepEqual(consoleErrors, []);
   assert.deepEqual(pageErrors, []);
 
+  assert.deepEqual(sceneFBrowserRequests, []);
   console.log(JSON.stringify({
-    defaultMovieCount: defaultPayload.movies.length,
-    recoveredMovieCount: allHiddenPayload.movies.length,
+    defaultMovieCount: visibleDefault.length,
+    recoveredMovieCount: visibleAllHidden.length,
+    snapshotMovieCount: defaultPayload.movies.length,
+    hideToggleRefetchCount: 0,
     amcHiddenCount: defaultPayload.amcFilter.excludedMovieCount,
     userHidePersisted: true,
     pinPersistedAndSortedFirst: true,

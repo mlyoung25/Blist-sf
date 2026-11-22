@@ -1,18 +1,22 @@
 # Blist
 
-A minimal, movie-first San Francisco showtimes guide. Listings are fetched from the
-public [SceneF API](https://scenef.com/agents), normalized on the server, and shown
-without synthetic fallback data.
+A minimal, movie-first San Francisco showtimes guide. The daily refresh job fetches
+listings from the public [SceneF API](https://scenef.com/agents), writes the complete
+normalized payload to a database, and the page reads that stored snapshot only.
+Nothing on page load or hide/unhide talks to SceneF. There is no synthetic fallback
+data.
 
 One card represents a movie across every configured theater. Open a card to see each
 theater's full currently published run, grouped by date. An ellipsis means the movie
 reaches that theater's last published SceneF date, so later availability is unknown.
 
-Movies appearing in SceneF's `amc-kabuki` or `amc-metreon` feeds are hidden by
-default using normalized title matching. **Show all hidden** fetches the unfiltered
-roster and also restores user-hidden cards. It fails closed if either AMC source
-cannot be checked. Pins and manual hides persist in local storage; pins only reorder
-the main movie grid and do not create a separate saved page.
+Movies appearing in SceneF's `amc-kabuki` or `amc-metreon` feeds are stored on every
+snapshot and hidden in the default view using normalized title matching. **Show all
+hidden** is a client filter over that snapshot: it reveals AMC-linked titles, restores
+user-hidden cards, and shows Kabuki/Metreon showtimes on combined cards. Toggling it
+does not refetch SceneF. Refresh fails closed if either AMC source cannot be checked.
+Pins and manual hides persist in local storage; pins only reorder the main movie grid
+and do not create a separate saved page.
 
 The UI supports simultaneous theater selections and one-day/multi-day filtering.
 One-day cards use a thicker blue outer border; verified On Film cards use a complete
@@ -80,9 +84,9 @@ then stable movie ID. Selecting a date bubble filters to movies playing that day
 
 On Film membership is matched only by SceneF's own film slug from the rendered,
 server-authored [`/on-film`](https://scenef.com/on-film) page. The app does not infer
-membership from age, genre, repertory tags, or theater. The page is cached alongside
-the listings for 12 hours; fetch failures are isolated and reported in the source
-details instead of marking unverified movies. Matching cards receive an accessible
+membership from age, genre, repertory tags, or theater. Membership is captured during
+the scheduled refresh and stored with the snapshot; fetch failures are isolated and
+reported in the source details instead of marking unverified movies. Matching cards receive an accessible
 yellow treatment and can be filtered with the gold **On film** checkbox. The blue
 **One day only** checkbox matches the one-day card's outer border and replaces the
 general run-length selector.
@@ -108,10 +112,38 @@ the chosen anchor so standard-time mornings align with 4:00 AM Pacific. Configur
 `CRON_SECRET` in the deployment so Vercel sends `Authorization: Bearer <CRON_SECRET>`.
 The route refreshes on every authorized cron invocation (no secondary 4:00 PM window).
 
-The refresh invalidates the shared SceneF cache and prewarms all 10 theater sources,
-the On Film page, and both AMC comparison sources. SceneF's per-screening freshness,
-confidence, verification timestamp, and stable `/go/` ticket URL remain attached to
-normalized runs.
+The refresh fetches all 10 indie theaters, both AMC sources, the On Film page, and
+Wikidata language metadata once, then writes the full payload (including AMC titles
+and Kabuki/Metreon showtimes) to the listing store. Dates before the current Pacific
+calendar day are dropped from that snapshot; missing future dates are never invented.
+`GET /api/showtimes` reads the stored snapshot only.
+
+### Listing storage
+
+| Environment | Store | Required env |
+| --- | --- | --- |
+| Vercel | [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres) / Neon (`listing_snapshots` JSONB row `id=current`) | `POSTGRES_URL` or `DATABASE_URL` |
+| Local / `next dev` | `.data/listings-snapshot.json` | none |
+
+On Vercel the file fallback is disabled: serverless disks are ephemeral, so
+`POSTGRES_URL` is required in production.
+
+| Variable | Where | Purpose |
+| --- | --- | --- |
+| `CRON_SECRET` | Vercel (and local refresh) | Bearer token for `GET /api/refresh` |
+| `POSTGRES_URL` or `DATABASE_URL` | Vercel Postgres / Neon | Persist the listing snapshot |
+| `LISTING_SNAPSHOT_PATH` | Local only | Override the JSON file path (default `.data/listings-snapshot.json`) |
+
+After connecting Vercel Postgres, trigger `/api/refresh` once (or wait for the daily
+cron) so `/api/showtimes` has a row to read. Locally:
+
+```bash
+CRON_SECRET=dev npm run dev
+curl -H "Authorization: Bearer dev" http://127.0.0.1:3000/api/refresh
+```
+
+SceneF's per-screening freshness, confidence, verification timestamp, and stable
+`/go/` ticket URL remain attached to normalized runs.
 
 ## Run locally
 
@@ -120,7 +152,8 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Next.js.
+Open the local URL printed by Next.js. Seed the local snapshot with the curl command
+above before expecting movies on the home page.
 
 ## Quality checks
 

@@ -379,12 +379,7 @@ export default function ShowtimesApp() {
             <input
               type="checkbox"
               checked={showAllHidden}
-              onChange={(event) => {
-                setLoading(true);
-                setError(null);
-                setPayload(null);
-                setShowAllHidden(event.target.checked);
-              }}
+              onChange={(event) => setShowAllHidden(event.target.checked)}
               className="accent-white"
             />
             Show all hidden
