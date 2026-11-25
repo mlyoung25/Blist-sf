@@ -111,3 +111,62 @@ test("merged AMC showtimes stay on the combined card and hide unless revealed", 
     ["amc-kabuki", "roxie"],
   );
 });
+
+test("selected theaters keep only those runs on a combined card", () => {
+  const roxie = VENUES.find((item) => item.id === "roxie");
+  const balboa = VENUES.find((item) => item.id === "balboa");
+  assert.ok(roxie);
+  assert.ok(balboa);
+  const payload = normalizeFeeds([
+    {
+      venue: roxie,
+      feed: feed("roxie", [film, { key: "tmdb-2", title: "Roxie Only", year: 2026 }], [
+        screening("roxie-1", "tmdb-1", "roxie", "2026-10-15"),
+        screening("roxie-2", "tmdb-1", "roxie", "2026-10-16"),
+        screening("roxie-3", "tmdb-2", "roxie", "2026-10-15"),
+      ]),
+    },
+    {
+      venue: balboa,
+      feed: feed("balboa", [film], [
+        screening("balboa-1", "tmdb-1", "balboa", "2026-10-15"),
+      ]),
+    },
+  ]);
+  const combined = payload.movies.find((movie) => movie.title === "A Real Film");
+  const roxieOnly = payload.movies.find((movie) => movie.title === "Roxie Only");
+  assert.ok(combined);
+  assert.ok(roxieOnly);
+
+  const roxieRuns = displayRunsForMovie(combined, {
+    showAllHidden: false,
+    amcVenueSelected: false,
+    selectedVenueIds: ["balboa"],
+  });
+  assert.deepEqual(roxieRuns.map((run) => run.venueId), ["balboa"]);
+  assert.equal(roxieRuns[0]?.durationDays, 1);
+  assert.equal(
+    displayRunsForMovie(roxieOnly, {
+      showAllHidden: false,
+      amcVenueSelected: false,
+      selectedVenueIds: ["balboa"],
+    }).length,
+    0,
+  );
+  assert.deepEqual(
+    displayRunsForMovie(combined, {
+      showAllHidden: false,
+      amcVenueSelected: false,
+      selectedVenueIds: [],
+    }).map((run) => run.venueId).sort(),
+    ["balboa", "roxie"],
+  );
+  assert.deepEqual(
+    displayRunsForMovie(combined, {
+      showAllHidden: false,
+      amcVenueSelected: false,
+    }).map((run) => run.venueId).sort(),
+    ["balboa", "roxie"],
+    "expanded details omit selectedVenueIds and keep every theater",
+  );
+});

@@ -889,12 +889,24 @@ export function isAmcVenueId(venueId: string): boolean {
   return AMC_VENUES.some((venue) => venue.id === venueId);
 }
 
+export type DisplayRunOptions = {
+  showAllHidden: boolean;
+  amcVenueSelected: boolean;
+  selectedVenueIds?: readonly string[];
+};
+
 export function displayRunsForMovie(
   movie: Movie,
-  options: { showAllHidden: boolean; amcVenueSelected: boolean },
+  options: DisplayRunOptions,
 ): TheaterRun[] {
-  if (options.showAllHidden || options.amcVenueSelected) return movie.runs;
-  return movie.runs.filter((run) => !isAmcVenueId(run.venueId));
+  const selectedVenueIds = options.selectedVenueIds ?? [];
+  let runs = options.showAllHidden || options.amcVenueSelected
+    ? movie.runs
+    : movie.runs.filter((run) => !isAmcVenueId(run.venueId));
+  if (selectedVenueIds.length > 0) {
+    runs = runs.filter((run) => selectedVenueIds.includes(run.venueId));
+  }
+  return runs;
 }
 
 export function shouldHideAmcLinkedMovie(
