@@ -1,4 +1,14 @@
 export const REFRESH_TIME_ZONE = "America/Los_Angeles";
+
+/** YYYY-MM-DD in Pacific time, used to drop past showtimes from a stored snapshot. */
+export function pacificCalendarDate(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: REFRESH_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
 export const REFRESH_LOCAL_HOUR = 4;
 /** Single Vercel Hobby cron: daily at 12:00 UTC. */
 export const VERCEL_CRON_SCHEDULE = "0 12 * * *";
