@@ -1,8 +1,8 @@
 import { connection } from "next/server";
-import { fetchSceneFMovies } from "@/lib/scenef";
-import { dropPastListings } from "@/lib/listing-snapshot";
-import { writeListingSnapshot } from "@/lib/listing-store";
-import { pacificCalendarDate, REFRESH_TIME_ZONE, VERCEL_CRON_UTC_TIME } from "@/lib/refresh-schedule";
+import { refreshListingSnapshot } from "@/lib/listing-refresh";
+import { REFRESH_TIME_ZONE, VERCEL_CRON_UTC_TIME } from "@/lib/refresh-schedule";
+
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   await connection();
@@ -16,11 +16,8 @@ export async function GET(request: Request) {
   }
 
   const now = new Date();
-  const payload = dropPastListings(
-    await fetchSceneFMovies({ fresh: true }),
-    pacificCalendarDate(now),
-  );
-  const stored = await writeListingSnapshot(payload, now.toISOString());
+  const stored = await refreshListingSnapshot(now);
+  const payload = stored.payload;
   const amcShowtimeCount = payload.movies.reduce((count, movie) => (
     count + movie.runs.filter((run) => run.venueId === "amc-kabuki" || run.venueId === "amc-metreon")
       .reduce((showtimes, run) => showtimes + run.dates.reduce((sum, date) => sum + date.showtimes.length, 0), 0)

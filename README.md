@@ -116,7 +116,9 @@ The refresh fetches all 10 indie theaters, both AMC sources, the On Film page, a
 Wikidata language metadata once, then writes the full payload (including AMC titles
 and Kabuki/Metreon showtimes) to the listing store. Dates before the current Pacific
 calendar day are dropped from that snapshot; missing future dates are never invented.
-`GET /api/showtimes` reads the stored snapshot only.
+`GET /api/showtimes` reads the stored snapshot. If the table is empty (first
+deploy before cron), it fetches SceneF once, writes the snapshot, and returns
+that payload. Later page loads and hide/unhide do not call SceneF.
 
 ### Listing storage
 
@@ -142,8 +144,8 @@ On Vercel the file fallback is disabled. The Prisma Marketplace integration sets
 
 Do **not** point `DATABASE_URL` / `POSTGRES_URL` at `prisma+postgres://accelerate.prisma-data.net/…`. That Accelerate URL made the old Neon client call `GET /v1/{resource}` and surface `resource-not-found` as a fake SceneF error. In Prisma Console → Connect, copy the **direct** `postgres://` host `db.prisma.io`.
 
-After connecting Prisma Postgres, trigger `/api/refresh` once (or wait for the daily
-cron) so `/api/showtimes` has a row to read. Locally:
+After connecting Prisma Postgres, the next `/api/showtimes` request seeds the empty
+table (or wait for daily cron / `GET /api/refresh`). Locally:
 
 ```bash
 CRON_SECRET=dev npm run dev
