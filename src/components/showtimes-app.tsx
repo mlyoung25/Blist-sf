@@ -436,7 +436,7 @@ export default function ShowtimesApp() {
 
         {error && (
           <div className="rounded-md border border-red-400/30 bg-red-950/30 p-4 text-sm text-red-200">
-            SceneF could not be loaded: {error}
+            Listings could not be loaded: {error}
           </div>
         )}
 

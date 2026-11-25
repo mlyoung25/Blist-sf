@@ -116,26 +116,36 @@ The refresh fetches all 10 indie theaters, both AMC sources, the On Film page, a
 Wikidata language metadata once, then writes the full payload (including AMC titles
 and Kabuki/Metreon showtimes) to the listing store. Dates before the current Pacific
 calendar day are dropped from that snapshot; missing future dates are never invented.
-`GET /api/showtimes` reads the stored snapshot only.
+`GET /api/showtimes` reads the stored snapshot. If the table is empty (first
+deploy before cron), it fetches SceneF once, writes the snapshot, and returns
+that payload. Later page loads and hide/unhide do not call SceneF.
 
 ### Listing storage
 
+Listings persist in Prisma Postgres via the `@prisma/ppg` serverless driver (HTTP/WebSocket
+to Prisma, **not** Neon’s `/v1/{resource}` HTTP API). The table is `listing_snapshots`
+(JSONB row `id=current`).
+
 | Environment | Store | Required env |
 | --- | --- | --- |
-| Vercel | [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres) / Neon (`listing_snapshots` JSONB row `id=current`) | `POSTGRES_URL` or `DATABASE_URL` |
+| Vercel | [Prisma Postgres](https://www.prisma.io/docs/guides/postgres/vercel) | Direct `postgres://…@db.prisma.io` URL |
 | Local / `next dev` | `.data/listings-snapshot.json` | none |
 
-On Vercel the file fallback is disabled: serverless disks are ephemeral, so
-`POSTGRES_URL` is required in production.
+On Vercel the file fallback is disabled. The Prisma Marketplace integration sets:
 
-| Variable | Where | Purpose |
-| --- | --- | --- |
-| `CRON_SECRET` | Vercel (and local refresh) | Bearer token for `GET /api/refresh` |
-| `POSTGRES_URL` or `DATABASE_URL` | Vercel Postgres / Neon | Persist the listing snapshot |
-| `LISTING_SNAPSHOT_PATH` | Local only | Override the JSON file path (default `.data/listings-snapshot.json`) |
+| Variable | Use |
+| --- | --- |
+| **`DATABASE_URL`** | **Required for this app.** Direct string `postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=require` |
+| `POSTGRES_URL` | Same direct string if `DATABASE_URL` is missing |
+| `PRISMA_DATABASE_URL` | Same, only if it is also `postgres://…@db.prisma.io` |
+| `DATABASE_URL_POOLED` | Pooled TCP (`pooled.db.prisma.io`). **Not used** by `@prisma/ppg` |
+| `CRON_SECRET` | Bearer token for `GET /api/refresh` |
+| `LISTING_SNAPSHOT_PATH` | Local JSON override (default `.data/listings-snapshot.json`) |
 
-After connecting Vercel Postgres, trigger `/api/refresh` once (or wait for the daily
-cron) so `/api/showtimes` has a row to read. Locally:
+Do **not** point `DATABASE_URL` / `POSTGRES_URL` at `prisma+postgres://accelerate.prisma-data.net/…`. That Accelerate URL made the old Neon client call `GET /v1/{resource}` and surface `resource-not-found` as a fake SceneF error. In Prisma Console → Connect, copy the **direct** `postgres://` host `db.prisma.io`.
+
+After connecting Prisma Postgres, the next `/api/showtimes` request seeds the empty
+table (or wait for daily cron / `GET /api/refresh`). Locally:
 
 ```bash
 CRON_SECRET=dev npm run dev

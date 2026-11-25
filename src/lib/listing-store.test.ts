@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { listingStoreKind, readCurrentListings, writeListingSnapshot } from "./listing-store.ts";
+import { listingStoreKind, readCurrentListings, resolveListingDatabaseUrl, writeListingSnapshot } from "./listing-store.ts";
 import { normalizeFeeds, type SceneFFeed, VENUES } from "./scenef.ts";
 
 function screening(id: string, filmKey: string, venueId: string, nightOf: string) {
@@ -30,22 +30,28 @@ function feed(venueId: string, films: SceneFFeed["films"], screenings: SceneFFee
 test("file store persists a full snapshot and reads it without SceneF", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "blist-listings-"));
   const previousPath = process.env.LISTING_SNAPSHOT_PATH;
-  const previousPostgres = process.env.POSTGRES_URL;
-  const previousDatabase = process.env.DATABASE_URL;
-  const previousVercel = process.env.VERCEL;
+  const previous = {
+    POSTGRES_URL: process.env.POSTGRES_URL,
+    DATABASE_URL: process.env.DATABASE_URL,
+    PRISMA_DATABASE_URL: process.env.PRISMA_DATABASE_URL,
+    DATABASE_URL_POOLED: process.env.DATABASE_URL_POOLED,
+    POSTGRES_URL_NON_POOLING: process.env.POSTGRES_URL_NON_POOLING,
+    VERCEL: process.env.VERCEL,
+  };
   process.env.LISTING_SNAPSHOT_PATH = path.join(dir, "listings-snapshot.json");
   delete process.env.POSTGRES_URL;
   delete process.env.DATABASE_URL;
+  delete process.env.PRISMA_DATABASE_URL;
+  delete process.env.DATABASE_URL_POOLED;
+  delete process.env.POSTGRES_URL_NON_POOLING;
   delete process.env.VERCEL;
   t.after(() => {
     if (previousPath === undefined) delete process.env.LISTING_SNAPSHOT_PATH;
     else process.env.LISTING_SNAPSHOT_PATH = previousPath;
-    if (previousPostgres === undefined) delete process.env.POSTGRES_URL;
-    else process.env.POSTGRES_URL = previousPostgres;
-    if (previousDatabase === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = previousDatabase;
-    if (previousVercel === undefined) delete process.env.VERCEL;
-    else process.env.VERCEL = previousVercel;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     return rm(dir, { recursive: true, force: true });
   });
 
@@ -70,20 +76,55 @@ test("file store persists a full snapshot and reads it without SceneF", async (t
 });
 
 test("vercel deployments refuse the file fallback", () => {
-  const previousVercel = process.env.VERCEL;
-  const previousPostgres = process.env.POSTGRES_URL;
-  const previousDatabase = process.env.DATABASE_URL;
+  const keys = ["VERCEL", "POSTGRES_URL", "DATABASE_URL", "PRISMA_DATABASE_URL", "DATABASE_URL_POOLED", "POSTGRES_URL_NON_POOLING"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   process.env.VERCEL = "1";
-  delete process.env.POSTGRES_URL;
-  delete process.env.DATABASE_URL;
+  for (const key of keys) {
+    if (key !== "VERCEL") delete process.env[key];
+  }
   try {
-    assert.throws(() => listingStoreKind(), /POSTGRES_URL/);
+    assert.throws(() => listingStoreKind(), /DATABASE_URL/);
   } finally {
-    if (previousVercel === undefined) delete process.env.VERCEL;
-    else process.env.VERCEL = previousVercel;
-    if (previousPostgres === undefined) delete process.env.POSTGRES_URL;
-    else process.env.POSTGRES_URL = previousPostgres;
-    if (previousDatabase === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = previousDatabase;
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
+test("listing store prefers a direct postgres:// Prisma URL over prisma+postgres Accelerate", () => {
+  const keys = ["DATABASE_URL", "POSTGRES_URL", "PRISMA_DATABASE_URL"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.POSTGRES_URL = "prisma+postgres://accelerate.prisma-data.net/?api_key=fake";
+  process.env.DATABASE_URL = "postgres://user:pass@db.prisma.io:5432/postgres?sslmode=require";
+  delete process.env.PRISMA_DATABASE_URL;
+  try {
+    assert.equal(
+      resolveListingDatabaseUrl(),
+      "postgres://user:pass@db.prisma.io:5432/postgres?sslmode=require",
+    );
+    assert.equal(listingStoreKind(), "postgres");
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
+test("listing store rejects Accelerate-only URLs instead of calling Neon HTTP", () => {
+  const keys = ["DATABASE_URL", "POSTGRES_URL", "PRISMA_DATABASE_URL", "POSTGRES_URL_NON_POOLING"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.POSTGRES_URL = "prisma+postgres://accelerate.prisma-data.net/?api_key=fake";
+  delete process.env.DATABASE_URL;
+  delete process.env.PRISMA_DATABASE_URL;
+  delete process.env.POSTGRES_URL_NON_POOLING;
+  try {
+    assert.throws(() => resolveListingDatabaseUrl(), /prisma\+postgres/);
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
   }
 });

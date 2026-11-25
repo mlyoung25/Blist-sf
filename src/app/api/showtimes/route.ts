@@ -1,20 +1,17 @@
 import { connection } from "next/server";
-import { readCurrentListings } from "@/lib/listing-store";
+import { readOrSeedCurrentListings } from "@/lib/listing-refresh";
+
+export const maxDuration = 60;
 
 export async function GET() {
   await connection();
   try {
-    const snapshot = await readCurrentListings();
-    if (!snapshot) {
-      return Response.json(
-        { error: "No listing snapshot is stored yet. Run the scheduled /api/refresh job." },
-        { status: 503 },
-      );
-    }
+    const snapshot = await readOrSeedCurrentListings();
     return Response.json(snapshot.payload, {
       headers: {
         "Cache-Control": "no-store",
         "X-Listing-Stored-At": snapshot.storedAt,
+        "X-Listing-Seeded": snapshot.seeded ? "1" : "0",
       },
     });
   } catch (error) {
