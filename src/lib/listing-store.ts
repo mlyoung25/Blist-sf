@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { neon } from "@neondatabase/serverless";
+import { defaultClientConfig, prismaPostgres } from "@prisma/ppg";
 import { dropPastListings } from "./listing-snapshot.ts";
 import { pacificCalendarDate } from "./refresh-schedule.ts";
 import type { MoviesPayload } from "./scenef.ts";
@@ -15,17 +15,40 @@ export type StoredListingSnapshot = {
   payload: MoviesPayload;
 };
 
-function postgresUrl() {
-  return process.env.POSTGRES_URL
-    ?? process.env.DATABASE_URL
-    ?? process.env.POSTGRES_URL_NON_POOLING
-    ?? null;
+const PRISMA_DIRECT_HINT = "Set DATABASE_URL to the direct Prisma Postgres URL from Prisma Console → Connect: postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=require. The Neon HTTP client cannot use prisma+postgres:// Accelerate URLs.";
+
+function envCandidates() {
+  return [
+    process.env.DATABASE_URL,
+    process.env.POSTGRES_URL,
+    process.env.PRISMA_DATABASE_URL,
+    process.env.POSTGRES_URL_NON_POOLING,
+  ].filter((value): value is string => Boolean(value));
+}
+
+function isPostgresTcpUrl(url: string) {
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
+function isPrismaAccelerateUrl(url: string) {
+  return url.startsWith("prisma+postgres://") || url.startsWith("prisma://");
+}
+
+/** Direct `postgres://…@db.prisma.io` string for `@prisma/ppg`. Never Neon HTTP or Accelerate. */
+export function resolveListingDatabaseUrl() {
+  const candidates = envCandidates();
+  const tcpUrl = candidates.find(isPostgresTcpUrl);
+  if (tcpUrl) return tcpUrl;
+  if (candidates.some(isPrismaAccelerateUrl)) {
+    throw new Error(`Listing store received a Prisma Accelerate URL (prisma+postgres://). ${PRISMA_DIRECT_HINT}`);
+  }
+  return null;
 }
 
 export function listingStoreKind(): ListingStoreKind {
-  if (postgresUrl()) return "postgres";
+  if (resolveListingDatabaseUrl()) return "postgres";
   if (process.env.VERCEL) {
-    throw new Error("POSTGRES_URL (or DATABASE_URL) is required on Vercel so listings persist across serverless invocations.");
+    throw new Error(`DATABASE_URL (direct postgres:// to db.prisma.io) is required on Vercel. ${PRISMA_DIRECT_HINT}`);
   }
   return "file";
 }
@@ -34,14 +57,15 @@ function fileSnapshotPath() {
   return process.env.LISTING_SNAPSHOT_PATH ?? DEFAULT_FILE_SNAPSHOT_PATH;
 }
 
-async function withPostgres<T>(run: (sql: ReturnType<typeof neon>) => Promise<T>) {
-  const url = postgresUrl();
-  if (!url) throw new Error("Postgres is not configured.");
-  return run(neon(url));
+function listingClient() {
+  const url = resolveListingDatabaseUrl();
+  if (!url) throw new Error("Prisma Postgres is not configured.");
+  return prismaPostgres(defaultClientConfig(url));
 }
 
-async function ensureSnapshotTable(sql: ReturnType<typeof neon>) {
-  await sql`
+async function ensureSnapshotTable() {
+  const ppg = listingClient();
+  await ppg.sql.exec`
     CREATE TABLE IF NOT EXISTS listing_snapshots (
       id TEXT PRIMARY KEY,
       payload JSONB NOT NULL,
@@ -68,6 +92,16 @@ async function writeFileSnapshot(snapshot: StoredListingSnapshot) {
   await writeFile(target, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
 }
 
+function listingStoreError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/resource-not-found|GET \/v1\/\{resource\}/i.test(message)) {
+    return new Error(
+      `Listing store is not SceneF: Prisma Postgres rejected a Neon-style HTTP request. ${PRISMA_DIRECT_HINT} Original error: ${message}`,
+    );
+  }
+  return new Error(`Listing store failed: ${message}`);
+}
+
 export async function writeListingSnapshot(payload: MoviesPayload, storedAt = new Date().toISOString()) {
   const snapshot: StoredListingSnapshot = { storedAt, payload };
   const kind = listingStoreKind();
@@ -76,16 +110,19 @@ export async function writeListingSnapshot(payload: MoviesPayload, storedAt = ne
     return { kind, storedAt };
   }
 
-  await withPostgres(async (sql) => {
-    await ensureSnapshotTable(sql);
-    await sql`
+  try {
+    await ensureSnapshotTable();
+    const ppg = listingClient();
+    await ppg.sql.exec`
       INSERT INTO listing_snapshots (id, payload, stored_at)
-      VALUES (${LISTING_SNAPSHOT_ID}, ${JSON.stringify(payload)}, ${storedAt})
+      VALUES (${LISTING_SNAPSHOT_ID}, ${JSON.stringify(payload)}::jsonb, ${storedAt}::timestamptz)
       ON CONFLICT (id) DO UPDATE SET
         payload = EXCLUDED.payload,
         stored_at = EXCLUDED.stored_at
     `;
-  });
+  } catch (error) {
+    throw listingStoreError(error);
+  }
   return { kind, storedAt };
 }
 
@@ -93,21 +130,24 @@ export async function readListingSnapshot(): Promise<StoredListingSnapshot | nul
   const kind = listingStoreKind();
   if (kind === "file") return readFileSnapshot();
 
-  const rows = await withPostgres(async (sql) => {
-    await ensureSnapshotTable(sql);
-    return sql`
+  try {
+    await ensureSnapshotTable();
+    const ppg = listingClient();
+    const rows = await ppg.sql<{ payload: MoviesPayload; stored_at: string | Date }>`
       SELECT payload, stored_at
       FROM listing_snapshots
       WHERE id = ${LISTING_SNAPSHOT_ID}
       LIMIT 1
-    ` as unknown as Promise<{ payload: MoviesPayload; stored_at: string }[]>;
-  });
-  const row = rows[0];
-  if (!row?.payload || !row.stored_at) return null;
-  return {
-    storedAt: typeof row.stored_at === "string" ? row.stored_at : new Date(row.stored_at).toISOString(),
-    payload: row.payload,
-  };
+    `.collect();
+    const row = rows[0];
+    if (!row?.payload || !row.stored_at) return null;
+    return {
+      storedAt: typeof row.stored_at === "string" ? row.stored_at : new Date(row.stored_at).toISOString(),
+      payload: row.payload,
+    };
+  } catch (error) {
+    throw listingStoreError(error);
+  }
 }
 
 export async function readCurrentListings(now = new Date()) {
