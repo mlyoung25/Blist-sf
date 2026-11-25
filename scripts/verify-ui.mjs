@@ -398,8 +398,34 @@ try {
   await theaterDetails.getByLabel(requiredTheaters[0]).check();
   await theaterDetails.getByLabel(requiredTheaters[1]).check();
   const selectedIds = defaultPayload.venues.slice(0, 2).map((venue) => venue.id);
+  const selectedVenueNames = defaultPayload.venues.slice(0, 2).map((venue) => venue.name);
+  const otherVenueNames = defaultPayload.venues.slice(2).map((venue) => venue.name);
   const unionCount = visibleDefault.filter((movie) => movie.runs.some((run) => selectedIds.includes(run.venueId))).length;
   assert.equal(await page.locator("article").count(), unionCount);
+  const cardRunTexts = await page.locator("article ul").allTextContents();
+  assert.equal(cardRunTexts.length, unionCount);
+  assert.equal(
+    cardRunTexts.every((text) => (
+      selectedVenueNames.some((name) => text.includes(name))
+      && otherVenueNames.every((name) => !text.includes(name))
+    )),
+    true,
+  );
+  const filteredMulti = visibleDefault.find((movie) => (
+    movie.runs.some((run) => selectedIds.includes(run.venueId))
+    && movie.runs.some((run) => !selectedIds.includes(run.venueId))
+  ));
+  assert.ok(filteredMulti);
+  const gridCard = page.locator(`article[data-movie-id=${JSON.stringify(filteredMulti.id)}]`);
+  await gridCard.scrollIntoViewIfNeeded();
+  const gridRunText = await gridCard.locator("ul").innerText();
+  assert.equal(otherVenueNames.every((name) => !gridRunText.includes(name)), true);
+  await gridCard.getByRole("button", { name: `View full run for ${filteredMulti.title}` }).click();
+  const theaterDialog = page.getByRole("dialog");
+  for (const run of filteredMulti.runs) {
+    await theaterDialog.getByRole("link", { name: `${run.venueName} website (opens in a new tab)` }).waitFor();
+  }
+  await theaterDialog.getByRole("button", { name: "Close movie details" }).click();
   await theaterDetails.getByRole("button", { name: "Clear" }).click();
   await theaterDetails.locator("summary").click();
 

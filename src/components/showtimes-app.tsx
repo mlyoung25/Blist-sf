@@ -128,20 +128,18 @@ export default function ShowtimesApp() {
 
   const amcVenueSelected = selectedVenues.some((venueId) => isAmcVenueId(venueId));
   const displayOptions = useMemo(
-    () => ({ showAllHidden, amcVenueSelected }),
-    [amcVenueSelected, showAllHidden],
+    () => ({ showAllHidden, amcVenueSelected, selectedVenueIds: selectedVenues }),
+    [amcVenueSelected, selectedVenues, showAllHidden],
   );
 
   const visibleMovies = useMemo(() => {
     if (!payload) return [];
     const needle = query.trim().toLowerCase();
-    const filtered = payload.movies.filter((movie) => {
-        if (shouldHideAmcLinkedMovie(movie, payload, displayOptions)) return false;
+    const filtered = payload.movies.flatMap((movie) => {
+        if (shouldHideAmcLinkedMovie(movie, payload, displayOptions)) return [];
         const runs = displayRunsForMovie(movie, displayOptions);
-        if (runs.length === 0) return false;
+        if (runs.length === 0) return [];
         const matchesHidden = showAllHidden || !hidden.includes(movie.id);
-        const matchesVenues = selectedVenues.length === 0
-          || runs.some((run) => selectedVenues.includes(run.venueId));
         const oneDay = isOneDayMovie(runs);
         const matchesRun = !oneDayOnly || oneDay;
         const matchesDate = selectedDate === null
@@ -152,10 +150,13 @@ export default function ShowtimesApp() {
           movie.genres.join(" "),
           runs.map((run) => run.venueName).join(" "),
         ].join(" ").toLowerCase();
-        return matchesHidden && matchesVenues && matchesRun && matchesDate && matchesOnFilm && haystack.includes(needle);
+        if (!(matchesHidden && matchesRun && matchesDate && matchesOnFilm && haystack.includes(needle))) {
+          return [];
+        }
+        return [{ ...movie, runs }];
       });
     return sortMovies(filtered, selectedDate, pinned);
-  }, [displayOptions, hidden, onFilmOnly, oneDayOnly, payload, pinned, query, selectedDate, selectedVenues, showAllHidden]);
+  }, [displayOptions, hidden, onFilmOnly, oneDayOnly, payload, pinned, query, selectedDate, showAllHidden]);
 
   const availableDates = useMemo(() => {
     if (!payload) return [];
@@ -165,7 +166,9 @@ export default function ShowtimesApp() {
   }, [payload]);
 
   const selectedMovie = payload?.movies.find((movie) => movie.id === selectedMovieId) ?? null;
-  const selectedMovieRuns = selectedMovie ? displayRunsForMovie(selectedMovie, displayOptions) : [];
+  const selectedMovieRuns = selectedMovie
+    ? displayRunsForMovie(selectedMovie, { showAllHidden, amcVenueSelected })
+    : [];
   const pinnedMovies = visibleMovies.filter((movie) => pinned.includes(movie.id));
   const unpinnedMovies = visibleMovies.filter((movie) => !pinned.includes(movie.id));
 
@@ -188,7 +191,7 @@ export default function ShowtimesApp() {
   };
 
   const renderCard = (movie: Movie) => {
-    const runs = displayRunsForMovie(movie, displayOptions);
+    const runs = movie.runs;
     const oneDay = isOneDayMovie(runs);
     const isPinned = pinned.includes(movie.id);
     const isHidden = hidden.includes(movie.id);
