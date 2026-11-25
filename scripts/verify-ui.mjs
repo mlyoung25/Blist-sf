@@ -417,9 +417,10 @@ try {
   ));
   assert.ok(filteredMulti);
   const gridCard = page.locator(`article[data-movie-id=${JSON.stringify(filteredMulti.id)}]`);
+  await gridCard.scrollIntoViewIfNeeded();
   const gridRunText = await gridCard.locator("ul").innerText();
   assert.equal(otherVenueNames.every((name) => !gridRunText.includes(name)), true);
-  await gridCard.getByRole("button", { name: `Open dates and showtimes for ${filteredMulti.title}` }).click();
+  await gridCard.getByRole("button", { name: `View full run for ${filteredMulti.title}` }).click();
   const theaterDialog = page.getByRole("dialog");
   for (const run of filteredMulti.runs) {
     await theaterDialog.getByRole("link", { name: `${run.venueName} website (opens in a new tab)` }).waitFor();
